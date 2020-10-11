@@ -8,6 +8,9 @@
 #include <sys/types.h> 
 #include <unistd.h> 
 #include <pthread.h>
+#include <time.h>
+#include <signal.h>
+#include "Server.h"
   
 #define IP_PROTOCOL 0 
 #define PORT 5555 
@@ -18,18 +21,30 @@ struct sockaddr_in serverSocket;
 int addrlenServer;
 int len;
 
+ClientNode *clientList = NULL;
+int clientListSize = 0;
+int maxSockFd = 0;
+
 /* Prototipi */
 void *client_thread(void *);                /* Thread associato al client */
+void ctrl_c_handler();
 
 // Main - Server 
 int main(int argc, char *argv[]) 
 { 
+    system("clear");
+    setbuf(stdout,NULL);
+    srand(time(0));
+    signal(SIGINT, ctrl_c_handler);
+
     int mainSockFd; 
     int nBytes; 
   
     int ret;
 
     pthread_t tid;
+
+    int randInt;
 
     /* Struct sockaddr_in server */
     serverSocket.sin_family = AF_INET; 
@@ -53,35 +68,44 @@ int main(int argc, char *argv[])
         printf("\nFile descriptor not received!\n"); 
     else
         printf("\nFile descriptor %d received!\n", mainSockFd); 
-  
+
     /* Assegnazione dell'indirizzo locale alla socket */
     if (bind(mainSockFd, (struct sockaddr*)&serverSocket, addrlenServer) == 0) 
         printf("\nSuccessfully binded!\n"); 
     else
-        printf("\nBinding Failed!\n"); 
+        printf("\nBinding Failed!\n");
 
     /* Server in attesa di richieste da parte dei client */
-    while (1) { 
+    while (1) {
 
         printf("\nWaiting for file name...\n"); 
   
         /* Receive file name */
         bzero(net_buf, NET_BUF_SIZE); 
-  
+
         /* Descrittore IP:Porta */
-        recvfrom(mainSockFd, net_buf, NET_BUF_SIZE, 0, (struct sockaddr*)&clientSocket, &addrlenClient); 
-        printf("\n\nReceived packet from %s:%d\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+        recvfrom(mainSockFd, net_buf, NET_BUF_SIZE, 0, (struct sockaddr*)&clientSocket, &addrlenClient);
+
+        randInt = 5 + rand() % (1024+1 - 5);
+        ClientNode *newClient = newNode(randInt, inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+        addClientNode(&clientList, newClient, &clientListSize, &maxSockFd);
+
+        printf("\n\nReceived packet from %d:%s:%d\n", newClient->sockfd, newClient->ip, newClient->port);
         printf("\nClient says: %s", net_buf);
+
+        printf("\n\n---> STAMPA LISTA <---\n\n");
+        printf("|Size: %d - MAx: %d|\n", clientListSize, maxSockFd);
+        printList(clientList);
 
         bzero(net_buf, NET_BUF_SIZE);
 
         /* Creazione del thread associato al nuovo client */
-        ret = pthread_create(&tid, NULL, client_thread, (void *)&clientSocket);
-        if(ret != 0)
-        {
-            printf("New client thread error\n");
-            exit(-1);
-        }
+        // ret = pthread_create(&tid, NULL, client_thread, (void *)&clientSocket);
+        // if(ret != 0)
+        // {
+        //     printf("New client thread error\n");
+        //     exit(-1);
+        // }
 
         // /* Apertura del file "net_buf" in lettura */
         // fp = fopen(net_buf, "r"); 
@@ -121,7 +145,28 @@ int main(int argc, char *argv[])
     } 
 
     return 0; 
-} 
+}
+
+void ctrl_c_handler()
+{
+    int sock;
+    printf("Socket da eliminare: ");
+    scanf("%d", &sock);
+
+    ClientNode *tmp = clientList;
+
+    while(tmp != NULL)
+    {
+        if(tmp -> sockfd == sock)
+            deleteClientNode(&clientList, tmp, &clientListSize, &maxSockFd);
+
+        tmp = tmp -> next;
+    }
+
+    printf("\n\n---> STAMPA LISTA <---\n\n");
+    printf("|Size: %d - MAx: %d|\n", clientListSize, maxSockFd);
+    printList(clientList);
+}
 
 /* Thread associato al client */
 void *client_thread(void *args)
@@ -132,7 +177,6 @@ void *client_thread(void *args)
     struct sockaddr_in *clientSocket = (struct sockaddr_in*)args;
     int addrlenClient = sizeof(*clientSocket);
 
-    printf("LEN %s", len);
 
     /* Struct sockaddr_in server */
     serverSocket.sin_addr.s_addr = inet_addr(inet_ntoa(clientSocket -> sin_addr)); 

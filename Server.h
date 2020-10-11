@@ -1,7 +1,7 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-#include "common.h"
+//#include "common.h"
 
 /* Struttura associata al singolo client */
 typedef struct _ClientNode 
@@ -53,11 +53,10 @@ void empty(ClientNode *clientToBeDeleted)
 }
 
 /* Aggiunge un nuovo client alla lista clientList */
-int addClientNode(ClientNode **clientList, ClientNode *newClient, int *clientListSize, int *maxSockFd)
+void addClientNode(ClientNode **clientList, ClientNode *newClient, int *clientListSize, int *maxSockFd)
 {
 	ClientNode *tmp1, *tmp2;
 
-	(*clientListSize)++;
 
 	if((*clientListSize) == 0)
 	{
@@ -88,7 +87,8 @@ int addClientNode(ClientNode **clientList, ClientNode *newClient, int *clientLis
 					tmp1 -> prev = newClient;
 				}
 
-				return 0;
+				(*clientListSize)++;
+				return;
 			}
 			
 			tmp1 = tmp1 -> next;
@@ -99,8 +99,7 @@ int addClientNode(ClientNode **clientList, ClientNode *newClient, int *clientLis
 		newClient -> prev = tmp2;
 		*maxSockFd = newClient -> sockfd;
 	}
-
-	return 0;
+	(*clientListSize)++;
 }
 
 /* Elimina un client dalla lista clientList */
@@ -108,25 +107,26 @@ void deleteClientNode(ClientNode **clientList, ClientNode *client, int *clientLi
 {
 	ClientNode *current;
 
-	prev = *clientList;
 	current = *clientList;
-
-	(*groupListSize)--;
 
 	// Se client è l'unico elemento presente o l'ultimo
 	if(client -> next == NULL) {
 
 		// Se è l'unico
 		if(client -> prev == NULL) {
+			printf("Eliminazione in testa, unico elemento\n");
 			*maxSockFd = 0;
 		}
 		// Se è l'ultimo
 		else {
+			printf("Eliminazione in coda\n");
 			client -> prev -> next = NULL;
 			*maxSockFd = client -> prev -> sockfd;
 		}
 
 		empty(client);
+		(*clientListSize)--;
+		return;
 	}
 
 	/* Trovo la posizione di client, salvandola in 'current' */
@@ -137,20 +137,48 @@ void deleteClientNode(ClientNode **clientList, ClientNode *client, int *clientLi
 
 		current = current -> next;
 	}
+	printf("Porta da eliminare: %d\n", current->port);
 	/* Se l'elemento è in testa alla lista */
 	if(current == *clientList)
 	{
+		printf("Eliminazione in testa\n");
 		*clientList = current -> next;
 		current -> next -> prev = NULL;
 	}
 	/* Se l'elemento non è in testa alla lista */
 	else
 	{
+		printf("Eliminazione al centro\n");
 		current -> prev -> next = current -> next;
 		current -> next -> prev = current -> prev;
 	}
 	
 	empty(client);
+	(*clientListSize)--;
+
+}
+
+/* TEMP - Stampa lista */
+void printList(ClientNode *clientList)
+{
+	while(clientList != NULL)
+	{
+		printf("\n");
+		if(clientList->prev)
+			printf("Prev: %d\n", clientList->prev->sockfd);
+		else
+			printf("Prev: NULL\n");
+
+		printf("Sockfd: %d\nIP: %s\nPort: %d\n", clientList->sockfd, clientList->ip, clientList->port);
+		
+		if(clientList->next)
+			printf("Next: %d\n", clientList->next->sockfd);
+		else
+			printf("Next: NULL\n");
+
+		clientList = clientList->next;
+	}
+	printf("|-----------------------------|\n");
 }
 
 #endif
