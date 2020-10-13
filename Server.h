@@ -6,11 +6,15 @@
 /* Struttura associata al singolo client */
 typedef struct _ClientNode 
 {
-	int sockfd;					/* Descrittore del socket */
-	char ip[16];				/* IP Address */
-	int port;					/* Porta */
-	struct _ClientNode *next;	/* Puntatore a ClientNode successivo */
-	struct _ClientNode *prev;   /* Puntatore a ClientNode precedente */
+	unsigned int sockfd;					/* Descrittore del socket */
+	char ip[16];							/* IP Address */
+	unsigned int port;						/* Porta */
+ 
+	unsigned int lastSeqClient;				/* Ultimo numero di sequenza ricevuto dal CLient */
+	unsigned int lastSeqServer;				/* Ultimo numero di sequenza inviato al CLient */
+
+	struct _ClientNode *next;				/* Puntatore a ClientNode successivo */
+	struct _ClientNode *prev;   			/* Puntatore a ClientNode precedente */
 } ClientNode;
 
 /* Inizializzazione di un nuovo client */
@@ -22,6 +26,10 @@ ClientNode* newNode(int sockfd, char *ip, int port)
 		node -> sockfd = sockfd;
 		strcpy(node -> ip, ip);
 		node -> port = port;
+
+		lastSeqClient = 0;
+		lastSeqServer = 0;
+
 		node -> next = NULL;
 		node -> prev = NULL;
 	}

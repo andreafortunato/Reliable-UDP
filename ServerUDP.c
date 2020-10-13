@@ -1,23 +1,23 @@
 // Server - FTP on UDP 
-#include <arpa/inet.h> 
-#include <netinet/in.h> 
-#include <stdio.h> 
-#include <stdlib.h> 
-#include <string.h> 
-#include <sys/socket.h> 
-#include <sys/types.h> 
-#include <unistd.h> 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include <pthread.h>
 #include <time.h>
 #include <signal.h>
 #include "Server.h"
   
-#define IP_PROTOCOL 0 
-#define PORT 5555 
-#define NET_BUF_SIZE 32  
-#define NOFILE "File Not Found!" 
+#define IP_PROTOCOL 0
+#define PORT 5555
+#define NET_BUF_SIZE 32
+#define NOFILE "File Not Found!"
 
-struct sockaddr_in serverSocket; 
+struct sockaddr_in serverSocket;
 int addrlenServer;
 int len;
 
@@ -30,15 +30,15 @@ void *client_thread(void *);                /* Thread associato al client */
 void ctrl_c_handler();
 
 // Main - Server 
-int main(int argc, char *argv[]) 
+int main(int argc, char *argv[])
 { 
     system("clear");
     setbuf(stdout,NULL);
     srand(time(0));
     signal(SIGINT, ctrl_c_handler);
 
-    int mainSockFd; 
-    int nBytes; 
+    int mainSockFd;
+    int nBytes;
   
     int ret;
 
@@ -47,41 +47,41 @@ int main(int argc, char *argv[])
     int randInt;
 
     /* Struct sockaddr_in server */
-    serverSocket.sin_family = AF_INET; 
-    serverSocket.sin_port = htons(PORT); 
-    serverSocket.sin_addr.s_addr = INADDR_ANY; 
+    serverSocket.sin_family = AF_INET;
+    serverSocket.sin_port = htons(PORT);
+    serverSocket.sin_addr.s_addr = INADDR_ANY;
     addrlenServer = sizeof(serverSocket);
 
     /* Struct sockaddr_in client */
-    struct sockaddr_in clientSocket; 
+    struct sockaddr_in clientSocket;
     int addrlenClient = sizeof(clientSocket);
 
     /* Buffer di rete */
-    char net_buf[NET_BUF_SIZE]; 
-    FILE *fp; 
+    char net_buf[NET_BUF_SIZE];
+    FILE *fp;
     
     system("clear");
 
     /* Socket - UDP */
-    mainSockFd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL); 
-    if (mainSockFd < 0) 
-        printf("\nFile descriptor not received!\n"); 
+    mainSockFd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL);
+    if (mainSockFd < 0)
+        printf("\nFile descriptor not received!\n");
     else
-        printf("\nFile descriptor %d received!\n", mainSockFd); 
+        printf("\nFile descriptor %d received!\n", mainSockFd);
 
     /* Assegnazione dell'indirizzo locale alla socket */
-    if (bind(mainSockFd, (struct sockaddr*)&serverSocket, addrlenServer) == 0) 
-        printf("\nSuccessfully binded!\n"); 
+    if (bind(mainSockFd, (struct sockaddr*)&serverSocket, addrlenServer) == 0)
+        printf("\nSuccessfully binded!\n");
     else
         printf("\nBinding Failed!\n");
 
     /* Server in attesa di richieste da parte dei client */
     while (1) {
 
-        printf("\nWaiting for file name...\n"); 
+        printf("\nWaiting for file name...\n");
   
         /* Receive file name */
-        bzero(net_buf, NET_BUF_SIZE); 
+        bzero(net_buf, NET_BUF_SIZE);
 
         /* Descrittore IP:Porta */
         recvfrom(mainSockFd, net_buf, NET_BUF_SIZE, 0, (struct sockaddr*)&clientSocket, &addrlenClient);
@@ -106,42 +106,6 @@ int main(int argc, char *argv[])
         //     printf("New client thread error\n");
         //     exit(-1);
         // }
-
-        // /* Apertura del file "net_buf" in lettura */
-        // fp = fopen(net_buf, "r"); 
-        // printf("\nFile Name Received: %s\n", net_buf); 
-        // if (fp == NULL) 
-        //     printf("\nFile open failed!\n"); 
-        // else
-        //     printf("\nFile successfully opened!\n"); 
-
-        // /* If file not found send "File Not Found!" to client */
-        // if (fp == NULL) { 
-        //     clearBuf(net_buf);
-        //     strcpy(net_buf, NOFILE); 
-        //     len = strlen(NOFILE); 
-        //     net_buf[len] = EOF; 
-        // } 
-        // else { /* File exists, send file to client */
-
-        //     char ch;
-
-        //     clearBuf(net_buf);
-        //     for (int i = 0; i < NET_BUF_SIZE; i++) { 
-        //         ch = fgetc(fp); 
-        //         net_buf[i] = ch;
-        //         if (ch == EOF) 
-        //             break; 
-        //     }
-        // }
-
-        // /* Send file */
-        // sendto(sockfd, net_buf, NET_BUF_SIZE, 0, (struct sockaddr*)&addr_con, addrlen); 
-
-        // clearBuf(net_buf); 
-
-        // if (fp != NULL) 
-        //     fclose(fp); 
     } 
 
     return 0; 
