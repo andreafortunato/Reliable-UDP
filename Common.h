@@ -14,6 +14,9 @@ typedef struct _Segment
 	
 	char synBit[2];
 	char ackBit[2];
+	char finBit[2];
+
+	char winSize[3];
 
 	char msg[4096];
 } Segment;

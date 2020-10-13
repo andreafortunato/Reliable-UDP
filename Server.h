@@ -1,11 +1,10 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-//#include "common.h"
+#include "Common.h"
 
 /* Struttura associata al singolo client */
-typedef struct _ClientNode 
-{
+typedef struct _ClientNode {
 	unsigned int sockfd;					/* Descrittore del socket */
 	char ip[16];							/* IP Address */
 	unsigned int port;						/* Porta */
@@ -13,13 +12,35 @@ typedef struct _ClientNode
 	unsigned int lastSeqClient;				/* Ultimo numero di sequenza ricevuto dal CLient */
 	unsigned int lastSeqServer;				/* Ultimo numero di sequenza inviato al CLient */
 
+	pid_t clientTid;						/* Thread ID temporaneo associato al Client */
+
 	struct _ClientNode *next;				/* Puntatore a ClientNode successivo */
 	struct _ClientNode *prev;   			/* Puntatore a ClientNode precedente */
 } ClientNode;
 
+/* Struttura per il passaggio di dati alla creazione di un nuovo thread */
+typedef struct _ThreadArgs {
+	struct sockaddr_in *clientSocket;
+	ClientNode *clientNode;
+} ThreadArgs;
+
+ThreadArgs* newThreadArgs(struct sockaddr_in *clientSocket, ClientNode *newClient) {
+	ThreadArgs *threadArgs = (ThreadArgs *) malloc(sizeof(ThreadArgs));
+	if(threadArgs != NULL)
+	{
+		threadArgs -> clientSocket = clientSocket;
+		threadArgs -> clientNode = newClient;
+	} else {
+		printf("Error while trying to \"malloc\" a new ThreadArgs!\nClosing...\n");
+		exit(-1);
+	}
+
+
+	return threadArgs;
+}
+
 /* Inizializzazione di un nuovo client */
-ClientNode* newNode(int sockfd, char *ip, int port)
-{
+ClientNode* newNode(int sockfd, char *ip, int port) {
 	ClientNode *node = (ClientNode *) malloc(sizeof(ClientNode));
 	if(node != NULL)
 	{
@@ -32,14 +53,16 @@ ClientNode* newNode(int sockfd, char *ip, int port)
 
 		node -> next = NULL;
 		node -> prev = NULL;
+	} else {
+		printf("Error while trying to \"malloc\" a new ClientNode!\nClosing...\n");
+		exit(-1);
 	}
 
 	return node;
 }
 
 /* Informazioni sull'orario */
-char *getTime()
-{
+char *getTime() {
 	time_t dateTime;
 	struct tm* time_info;
 	char *time_buff = malloc(32);
@@ -53,16 +76,14 @@ char *getTime()
 }
 
 /* Chiusura socket, flag 'free' pagina logica (memoria riutilizzabile) ed azzeramento del suo contenuto */
-void empty(ClientNode *clientToBeDeleted)
-{
+void empty(ClientNode *clientToBeDeleted) {
 	close(clientToBeDeleted -> sockfd);
 	free(clientToBeDeleted);
 	bzero(clientToBeDeleted, sizeof(ClientNode));
 }
 
 /* Aggiunge un nuovo client alla lista clientList */
-void addClientNode(ClientNode **clientList, ClientNode *newClient, int *clientListSize, int *maxSockFd)
-{
+void addClientNode(ClientNode **clientList, ClientNode *newClient, int *clientListSize, int *maxSockFd) {
 	ClientNode *tmp1, *tmp2;
 
 
@@ -111,8 +132,7 @@ void addClientNode(ClientNode **clientList, ClientNode *newClient, int *clientLi
 }
 
 /* Elimina un client dalla lista clientList */
-void deleteClientNode(ClientNode **clientList, ClientNode *client, int *clientListSize, int *maxSockFd)
-{
+void deleteClientNode(ClientNode **clientList, ClientNode *client, int *clientListSize, int *maxSockFd) {
 	ClientNode *current;
 
 	current = *clientList;
@@ -167,8 +187,7 @@ void deleteClientNode(ClientNode **clientList, ClientNode *client, int *clientLi
 }
 
 /* TEMP - Stampa lista */
-void printList(ClientNode *clientList)
-{
+void printList(ClientNode *clientList) {
 	while(clientList != NULL)
 	{
 		printf("\n");

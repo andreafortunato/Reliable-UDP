@@ -46,6 +46,8 @@ int main(int argc, char *argv[])
 
     int randInt;
 
+    ClientNode *tmp;
+
     /* Struct sockaddr_in server */
     serverSocket.sin_family = AF_INET;
     serverSocket.sin_port = htons(PORT);
@@ -78,7 +80,7 @@ int main(int argc, char *argv[])
     /* Server in attesa di richieste da parte dei client */
     while (1) {
 
-        printf("\nWaiting for file name...\n");
+        printf("\nWaiting for operation request...\n");
   
         /* Receive file name */
         bzero(net_buf, NET_BUF_SIZE);
@@ -86,9 +88,35 @@ int main(int argc, char *argv[])
         /* Descrittore IP:Porta */
         recvfrom(mainSockFd, net_buf, NET_BUF_SIZE, 0, (struct sockaddr*)&clientSocket, &addrlenClient);
 
-        randInt = 5 + rand() % (1024+1 - 5);
-        ClientNode *newClient = newNode(randInt, inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
-        addClientNode(&clientList, newClient, &clientListSize, &maxSockFd);
+        // if(client esiste)
+        // {
+        //     tira su un thread ed esegui l'operazione richiesta
+        // } else {
+        //     tira su un thread e stabilisci la connessione (3-way handshake)
+        // }
+
+
+        tmp = clientList;
+        while(tmp != NULL) {
+            if(5 == ntohs(clientSocket.sin_port)) {
+                // Client esiste
+            } else {
+                randInt = 5 + rand() % (1024+1 - 5);
+                ClientNode *newClient = newNode(randInt, inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+                addClientNode(&clientList, newClient, &clientListSize, &maxSockFd);
+
+                ThreadArgs *threadArgs = newThreadArgs(&clientSocket, newClient);
+
+                /* Creazione di un thread utile alla fase di handshake */
+                ret = pthread_create(&tid, NULL, client_thread, (void *)threadArgs);
+                if(ret != 0)
+                {
+                    printf("New client thread error\n");
+                    exit(-1);
+                }
+            }
+            tmp = tmp -> next;
+        }
 
         printf("\n\nReceived packet from %d:%s:%d\n", newClient->sockfd, newClient->ip, newClient->port);
         printf("\nClient says: %s", net_buf);
@@ -98,14 +126,6 @@ int main(int argc, char *argv[])
         printList(clientList);
 
         bzero(net_buf, NET_BUF_SIZE);
-
-        /* Creazione del thread associato al nuovo client */
-        // ret = pthread_create(&tid, NULL, client_thread, (void *)&clientSocket);
-        // if(ret != 0)
-        // {
-        //     printf("New client thread error\n");
-        //     exit(-1);
-        // }
     } 
 
     return 0; 
@@ -135,11 +155,13 @@ void ctrl_c_handler()
 /* Thread associato al client */
 void *client_thread(void *args)
 {   
-
     int clientSockFd;
 
     struct sockaddr_in *clientSocket = (struct sockaddr_in*)args;
     int addrlenClient = sizeof(*clientSocket);
+
+    ThreadArgs *threadArgs = (ThreadArgs*)args;
+    threadArgs -> clientNode -> clientTid = gettid();
 
 
     /* Struct sockaddr_in server */
