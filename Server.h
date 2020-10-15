@@ -7,12 +7,13 @@
 typedef struct _ClientNode {
 	unsigned int sockfd;					/* Descrittore del socket */
 	char ip[16];							/* IP Address */
-	unsigned int port;						/* Porta */
+	unsigned int clientPort;				/* Porta sorgente del Client */
  
-	unsigned int lastSeqClient;				/* Ultimo numero di sequenza ricevuto dal CLient */
-	unsigned int lastSeqServer;				/* Ultimo numero di sequenza inviato al CLient */
+	pthread_t clientTid;					/* Thread ID temporaneo associato al Client */
+	unsigned int serverPort;				/* Porta del server riservata al Client*/
 
-	pid_t clientTid;						/* Thread ID temporaneo associato al Client */
+	unsigned int lastSeqClient;				/* Ultimo numero di sequenza ricevuto dal CLient */
+	unsigned int lastSeqServer;				/* Ultimo numero di sequenza inviato al Client */
 
 	struct _ClientNode *next;				/* Puntatore a ClientNode successivo */
 	struct _ClientNode *prev;   			/* Puntatore a ClientNode precedente */
@@ -40,16 +41,19 @@ ThreadArgs* newThreadArgs(struct sockaddr_in *clientSocket, ClientNode *newClien
 }
 
 /* Inizializzazione di un nuovo client */
-ClientNode* newNode(int sockfd, char *ip, int port) {
+ClientNode* newNode(unsigned int sockfd, char *ip, unsigned int clientPort, pthread_t tid, unsigned int serverPort) {
 	ClientNode *node = (ClientNode *) malloc(sizeof(ClientNode));
 	if(node != NULL)
 	{
 		node -> sockfd = sockfd;
 		strcpy(node -> ip, ip);
-		node -> port = port;
+		node -> clientPort = clientPort;
 
-		lastSeqClient = 0;
-		lastSeqServer = 0;
+		node -> clientTid = tid;
+		node -> serverPort = serverPort;
+
+		node -> lastSeqClient = 0;
+		node -> lastSeqServer = 0;
 
 		node -> next = NULL;
 		node -> prev = NULL;
@@ -165,7 +169,7 @@ void deleteClientNode(ClientNode **clientList, ClientNode *client, int *clientLi
 
 		current = current -> next;
 	}
-	printf("Porta da eliminare: %d\n", current->port);
+	printf("Porta da eliminare: %d\n", current->clientPort);
 	/* Se l'elemento è in testa alla lista */
 	if(current == *clientList)
 	{
@@ -196,7 +200,7 @@ void printList(ClientNode *clientList) {
 		else
 			printf("Prev: NULL\n");
 
-		printf("Sockfd: %d\nIP: %s\nPort: %d\n", clientList->sockfd, clientList->ip, clientList->port);
+		printf("Sockfd: %d\nIP: %s\nPort: %d\n", clientList->sockfd, clientList->ip, clientList->clientPort);
 		
 		if(clientList->next)
 			printf("Next: %d\n", clientList->next->sockfd);
