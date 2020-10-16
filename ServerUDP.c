@@ -18,7 +18,7 @@
 #define NOFILE "File Not Found!"
 
 /* Prototipi */
-void *client_thread(void *);                /* Thread associato al client */
+void *client_thread_handshake(void *);                /* Thread associato al client */
 void ctrl_c_handler();
 
 /* Variabili globali */
@@ -31,7 +31,6 @@ int len;
 ClientNode *clientList = NULL;
 int clientListSize = 0;
 int maxSockFd = 0;
-
 
 /*
 pthread_rwlock_wrlock(&lockList);
@@ -76,8 +75,19 @@ int main(int argc, char *argv[])
     struct sockaddr_in clientSocket;
     int addrlenClient = sizeof(clientSocket);
 
-    /* Buffer di rete */
-    char net_buf[NET_BUF_SIZE];
+    Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
+	if(rcvSegment == NULL)
+	{
+		printf("Error while trying to \"malloc\" a new Segment!\nClosing...\n");
+		exit(-1);
+	} 
+
+    ThreadArgs *threadArgs = (ThreadArgs *)malloc(sizeof(ThreadArgs));
+	if(threadArgs == NULL)
+	{
+		printf("Error while trying to \"malloc\" a new ThreadArgs!\nClosing...\n");
+		exit(-1);
+	}
     
     /* Socket - UDP */
     mainSockFd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL);
@@ -102,36 +112,35 @@ int main(int argc, char *argv[])
         printf("\nWaiting for operation request...\n");
   
         /* Receive file name */
-        bzero(net_buf, NET_BUF_SIZE);
+        bzero(rcvSegment, sizeof(Segment));
+        bzero(threadArgs, sizeof(ThreadArgs));
+
+        printf("Printf a caso\n");
 
         /* Descrittore IP:Porta */
-        recvfrom(mainSockFd, net_buf, NET_BUF_SIZE, 0, (struct sockaddr*)&clientSocket, (socklen_t*)&addrlenClient);
+        recvfrom(mainSockFd, rcvSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, (socklen_t*)&addrlenClient);
 
         /* Controllo se il Client esiste: in caso affermativo esegui l'operazione richiesta altrimenti utilizza un thread per la fase di 3-way handshake */
         tmp = clientList;
         exist = 0;
-        // if(clientList == NULL) {
-        //     /* Creazione di un thread utile alla fase di handshake */
-        //     ret = pthread_create(&tid, NULL, client_thread, (void *)&clientSocket);
-        //     if(ret != 0)
-        //     {
-        //         printf("New client thread error\n");
-        //         exit(-1);
-        //     }
-        // }
         while(tmp != NULL) {
             if(tmp -> clientPort == ntohs(clientSocket.sin_port)) {
                 // Client esiste
                 exist = 1;
+                break;
             }
             tmp = tmp -> next;
         }
 
         if(exist) {
             // switch operazione e tira su il thread corrispondente all' operazione
-        } else {
+        } 
+        else {
+
+        	threadArgs = newThreadArgs(clientSocket, rcvSegment -> seqNum);
+
             /* Creazione di un thread utile alla fase di handshake */
-            ret = pthread_create(&tid, NULL, client_thread, (void *)&clientSocket);
+            ret = pthread_create(&tid, NULL, client_thread_handshake, (void *)threadArgs);
             if(ret != 0)
             {
                 printf("New client thread error\n");
@@ -140,9 +149,9 @@ int main(int argc, char *argv[])
         }
 
         //printf("\n\nReceived packet from %d:%s:%d\n", newClient->sockfd, newClient->ip, newClient->clientPort);
-        printf("\nClient says: %s", net_buf);
+        //printf("\nClient says: %s", net_buf);
 
-        while(syncFlag==0);
+        while(syncFlag == 0);
         pthread_rwlock_rdlock(&lockList);
         printf("\n\n---> STAMPA LISTA <---\n\n");
         printf("|Size: %d - MAx: %d|\n", clientListSize, maxSockFd);
@@ -150,7 +159,7 @@ int main(int argc, char *argv[])
         pthread_rwlock_unlock(&lockList);
         syncFlag = 0;
 
-        bzero(net_buf, NET_BUF_SIZE);
+        //bzero(net_buf, NET_BUF_SIZE);
     } 
 
     /* Distruzione semaforo R/W */
@@ -183,39 +192,44 @@ void ctrl_c_handler()
 }
 
 /* Thread associato al client */
-void *client_thread(void *args)
+void *client_thread_handshake(void *args)
 {
     pthread_rwlock_wrlock(&lockList);
     syncFlag = 1;
     int clientSockFd;
 
-    struct sockaddr_in *clientSocket = (struct sockaddr_in*)args;
-    int addrlenClient = sizeof(*clientSocket);
+    ThreadArgs *threadArgs = (ThreadArgs*)args;
 
     /* Struct sockaddr_in server */
     struct sockaddr_in serverSocket;
     serverSocket.sin_family = AF_INET;
-    serverSocket.sin_addr.s_addr = inet_addr(inet_ntoa(clientSocket -> sin_addr));
+    serverSocket.sin_addr.s_addr = inet_addr(inet_ntoa(threadArgs -> clientSocket.sin_addr));
     addrlenServer = sizeof(serverSocket);
 
     clientSockFd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL);
 
     if (clientSockFd < 0){
-        printf("\nFailed creating socket for new client (%s:%d)!\n", inet_ntoa(clientSocket -> sin_addr), ntohs(clientSocket -> sin_port));
+        printf("\nFailed creating socket for new client (%s:%d)!\n", inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port));
         exit(0);
     }
 
-    do{
+    do {
         serverSocket.sin_port = 1024 + rand() % (65535+1 - 1024);
+    } while(bind(clientSockFd, (struct sockaddr*)&serverSocket, addrlenServer) != 0);
 
-    }while(bind(clientSockFd, (struct sockaddr*)&serverSocket, addrlenServer) != 0);
-
-    ClientNode *newClient = newNode(clientSockFd, inet_ntoa(clientSocket -> sin_addr), ntohs(clientSocket -> sin_port), pthread_self(), serverSocket.sin_port);
+    ClientNode *newClient = newNode(clientSockFd, inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port), pthread_self(), serverSocket.sin_port);
     
     addClientNode(&clientList, newClient, &clientListSize, &maxSockFd);
     pthread_rwlock_unlock(&lockList);
 
-    printf("Thread creato per %s:%d, bind su %d\n\n", newClient -> ip, newClient -> clientPort, newClient -> serverPort);
+    printf("\n\nThread creato per %s:%d, bind su %d\n\n", newClient -> ip, newClient -> clientPort, newClient -> serverPort);
+
+
+    /* SYN-ACK */
+    Segment *synAck = newSegment( 1, 2, TRUE, TRUE, FALSE, "");
+	sendto(clientSockFd, synAck, sizeof(Segment), 0, (struct sockaddr*)&serverSocket, addrlenServer);    
+
+
 
 
     // /* Struct sockaddr_in server */

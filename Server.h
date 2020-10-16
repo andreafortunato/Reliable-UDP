@@ -21,21 +21,20 @@ typedef struct _ClientNode {
 
 /* Struttura per il passaggio di dati alla creazione di un nuovo thread */
 typedef struct _ThreadArgs {
-	struct sockaddr_in *clientSocket;
-	ClientNode *clientNode;
+	struct sockaddr_in clientSocket;
+	char seqNumClient[3];
 } ThreadArgs;
 
-ThreadArgs* newThreadArgs(struct sockaddr_in *clientSocket, ClientNode *newClient) {
+ThreadArgs* newThreadArgs(struct sockaddr_in clientSocket, char *seqNumClient) {
 	ThreadArgs *threadArgs = (ThreadArgs *) malloc(sizeof(ThreadArgs));
 	if(threadArgs != NULL)
 	{
 		threadArgs -> clientSocket = clientSocket;
-		threadArgs -> clientNode = newClient;
+		strcpy(threadArgs -> seqNumClient, seqNumClient);
 	} else {
 		printf("Error while trying to \"malloc\" a new ThreadArgs!\nClosing...\n");
 		exit(-1);
 	}
-
 
 	return threadArgs;
 }
