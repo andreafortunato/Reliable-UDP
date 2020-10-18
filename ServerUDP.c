@@ -1,3 +1,5 @@
+// https://packetlife.net/blog/2010/jun/7/understanding-tcp-sequence-acknowledgment-numbers/
+
 // Server - FTP on UDP 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -25,20 +27,11 @@ void ctrl_c_handler();
 pthread_rwlock_t lockList;                  /* Semaforo Read/Write necessario per la gestione degli accessi alla lista */
 int syncFlag = 0;
 
-int addrlenServer;
 int len;
 
 ClientNode *clientList = NULL;
 int clientListSize = 0;
 int maxSockFd = 0;
-
-/*
-pthread_rwlock_wrlock(&lockList);
-pthread_rwlock_unlock(&lockList);
-
-pthread_rwlock_rdlock(&lockList);
-pthread_rwlock_unlock(&lockList);
-*/
 
 // Main - Server 
 int main(int argc, char *argv[])
@@ -51,7 +44,7 @@ int main(int argc, char *argv[])
     /* Inizializzazione semaforo R/W */
     if(pthread_rwlock_init(&lockList, NULL) != 0) {
         printf("Failed semaphore initialization.\n");
-        exit(0);
+        exit(-1);
     }
 
     int mainSockFd;
@@ -69,7 +62,7 @@ int main(int argc, char *argv[])
     serverSocket.sin_family = AF_INET;
     serverSocket.sin_port = htons(PORT);
     serverSocket.sin_addr.s_addr = INADDR_ANY;
-    addrlenServer = sizeof(serverSocket);
+    int addrlenServer = sizeof(serverSocket);
 
     /* Struct sockaddr_in client */
     struct sockaddr_in clientSocket;
@@ -93,7 +86,7 @@ int main(int argc, char *argv[])
     mainSockFd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL);
     if (mainSockFd < 0){
         printf("\nFile descriptor not received!\n");
-        exit(0);
+        exit(-1);
     }
     else
         printf("\nFile descriptor %d received!\n", mainSockFd);
@@ -103,7 +96,7 @@ int main(int argc, char *argv[])
         printf("\nSuccessfully binded!\n");
     else {
         printf("\nBinding Failed!\n");
-        exit(0);
+        exit(-1);
     }
 
     /* Server in attesa di richieste da parte dei client */
@@ -133,10 +126,9 @@ int main(int argc, char *argv[])
         }
 
         if(exist) {
-            // switch operazione e tira su il thread corrispondente all' operazione
+            // switch-case operazione e tira su il thread corrispondente all' operazione
         } 
         else {
-
         	threadArgs = newThreadArgs(clientSocket, rcvSegment -> seqNum);
 
             /* Creazione di un thread utile alla fase di handshake */
@@ -165,7 +157,7 @@ int main(int argc, char *argv[])
     /* Distruzione semaforo R/W */
     if(pthread_rwlock_destroy(&lockList) != 0) {
         printf("Failed semaphore destruction.\n");
-        exit(0);
+        exit(-1);
     }
     return 0; 
 }
@@ -194,9 +186,8 @@ void ctrl_c_handler()
 /* Thread associato al client */
 void *client_thread_handshake(void *args)
 {
-    pthread_rwlock_wrlock(&lockList);
-    syncFlag = 1;
     int clientSockFd;
+    int ret;
 
     ThreadArgs *threadArgs = (ThreadArgs*)args;
 
@@ -204,21 +195,23 @@ void *client_thread_handshake(void *args)
     struct sockaddr_in serverSocket;
     serverSocket.sin_family = AF_INET;
     serverSocket.sin_addr.s_addr = inet_addr(inet_ntoa(threadArgs -> clientSocket.sin_addr));
-    addrlenServer = sizeof(serverSocket);
+    int addrlenServer = sizeof(serverSocket);
 
     clientSockFd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL);
 
     if (clientSockFd < 0){
         printf("\nFailed creating socket for new client (%s:%d)!\n", inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port));
-        exit(0);
+        exit(-1);
     }
 
     do {
         serverSocket.sin_port = 1024 + rand() % (65535+1 - 1024);
     } while(bind(clientSockFd, (struct sockaddr*)&serverSocket, addrlenServer) != 0);
 
-    ClientNode *newClient = newNode(clientSockFd, inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port), pthread_self(), serverSocket.sin_port);
+    ClientNode *newClient = newNode(clientSockFd, inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port), pthread_self(), serverSocket.sin_port, threadArgs -> seqNumClient);
     
+    pthread_rwlock_wrlock(&lockList);
+    syncFlag = 1;
     addClientNode(&clientList, newClient, &clientListSize, &maxSockFd);
     pthread_rwlock_unlock(&lockList);
 
@@ -226,9 +219,31 @@ void *client_thread_handshake(void *args)
 
 
     /* SYN-ACK */
-    Segment *synAck = newSegment( 1, 2, TRUE, TRUE, FALSE, "");
-	sendto(clientSockFd, synAck, sizeof(Segment), 0, (struct sockaddr*)&serverSocket, addrlenServer);    
+    char ackNum[MAX_SEQ_ACK_NUM];
+    sprintf(ackNum, "%d", atoi(threadArgs -> seqNumClient) + 1);
 
+    Segment *synAck = newSegment("0", ackNum, TRUE, TRUE, FALSE, "");
+
+	if((ret = sendto(clientSockFd, synAck, sizeof(Segment), 0, (struct sockaddr*)&serverSocket, addrlenServer)) != sizeof(Segment)) {
+        printf("Error trying to send a SYN-ACK segment to client %s:%d\n", inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port));
+        exit(-1);
+    }
+    newClient -> lastSeqServer = 0;
+
+    Segment *rcvSegment = (Segment*) malloc(sizeof(Segment));
+    if(rcvSegment == NULL)
+    {
+        printf("Error while trying to \"malloc\" a new ACK segment of SYN-ACK!\nClosing...\n");
+        exit(-1);
+    }
+    recvfrom(clientSockFd, rcvSegment, sizeof(Segment), 0, NULL, NULL);
+    if((atoi(rcvSegment -> ackBit) != 1) || (atoi(rcvSegment -> ackNum) != (newClient -> lastSeqServer + 1))) {
+        printf("Error: wrong ACK of SYN-ACK received from %s:%d\n", inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port));
+        exit(-1);
+    }
+    close(clientSockFd);
+    pthread_exit(NULL);
+    // Timeout syn-ack: se dopo X secondi/minuti non ho ricevuto 
 
 
 

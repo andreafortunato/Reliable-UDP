@@ -2,9 +2,11 @@
 #define COMMON_H
 
 
-// Dimensione massima finestra: 40 --> Sequence Number: 0->39 (modulo 40)
-#define maxSeqNum 3			/* Il massimo Sequence Number è 39, quindi 2 caratteri */
-#define maxAckNum 3			/* Il massimo Ack Number è 39, quindi 2 caratteri */
+/* Dimensione campo Seq/Ack 11 perchè il massimo valore rappresentabile
+   in TCP è (2^16)-1 = 4294967295, quindi 11 caratteri */
+// Provare 2**16 pow(2,16) per elevare 2 alla 16
+#define MAX_SEQ_ACK_NUM 11
+#define BIT 2
 
 /**/
 #define TRUE "1"
@@ -12,16 +14,18 @@
 
 typedef struct _Segment
 {
-	char seqNum[maxSeqNum];  /* Numero di sequenza del client/server */
-	char ackNum[maxAckNum];  /* Ack del segmento ricevuto */
+	char eotBit[BIT];				/* End Of Transmission Bit: posto ad 1 se l'operazione (download/upload/list)
+									   è conclusa con successo, 0 altrimenti */
+	char seqNum[MAX_SEQ_ACK_NUM];	/* Numero di sequenza del client/server */
+	char ackNum[MAX_SEQ_ACK_NUM];	/* Ack del segmento ricevuto */
 	
-	char synBit[2];          
-	char ackBit[2];
-	char finBit[2];
+	char synBit[BIT];          
+	char ackBit[BIT];
+	char finBit[BIT];
 
 	char winSize[3];
 
-	char msg[4096];
+	char msg[4081];
 } Segment;
 
 /* Inizializzazione di un nuovo client */
@@ -29,7 +33,16 @@ Segment* newSegment(char *seqNum, char *ackNum, char *synBit, char *ackBit, char
 	Segment *segment = (Segment*) malloc(sizeof(Segment));
 	if(segment != NULL)
 	{
+		strcpy(segment -> seqNum, seqNum);
+		strcpy(segment -> ackNum, ackNum);
+
+		strcpy(segment -> synBit, synBit);
+		strcpy(segment -> ackBit, ackBit);
+		strcpy(segment -> finBit, finBit);
 		
+		strcpy(segment -> winSize, "5");
+		
+		strcpy(segment -> msg, msg);
 	} else {
 		printf("Error while trying to \"malloc\" a new Segment!\nClosing...\n");
 		exit(-1);

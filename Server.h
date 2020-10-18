@@ -22,7 +22,7 @@ typedef struct _ClientNode {
 /* Struttura per il passaggio di dati alla creazione di un nuovo thread */
 typedef struct _ThreadArgs {
 	struct sockaddr_in clientSocket;
-	char seqNumClient[3];
+	char seqNumClient[11];
 } ThreadArgs;
 
 ThreadArgs* newThreadArgs(struct sockaddr_in clientSocket, char *seqNumClient) {
@@ -40,7 +40,7 @@ ThreadArgs* newThreadArgs(struct sockaddr_in clientSocket, char *seqNumClient) {
 }
 
 /* Inizializzazione di un nuovo client */
-ClientNode* newNode(unsigned int sockfd, char *ip, unsigned int clientPort, pthread_t tid, unsigned int serverPort) {
+ClientNode* newNode(unsigned int sockfd, char *ip, unsigned int clientPort, pthread_t tid, unsigned int serverPort, char *lastSeqClient) {
 	ClientNode *node = (ClientNode *) malloc(sizeof(ClientNode));
 	if(node != NULL)
 	{
@@ -51,7 +51,7 @@ ClientNode* newNode(unsigned int sockfd, char *ip, unsigned int clientPort, pthr
 		node -> clientTid = tid;
 		node -> serverPort = serverPort;
 
-		node -> lastSeqClient = 0;
+		node -> lastSeqClient = atoi(lastSeqClient);
 		node -> lastSeqServer = 0;
 
 		node -> next = NULL;
