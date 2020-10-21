@@ -9,7 +9,7 @@ typedef struct _ClientNode {
 	char ip[16];							/* IP Address */
 	unsigned int clientPort;				/* Porta sorgente del Client */
  
-	pthread_t clientTid;					/* Thread ID temporaneo associato al Client */
+	pthread_t tid;					/* Thread ID temporaneo associato al Client */
 	unsigned int serverPort;				/* Porta del server riservata al Client*/
 
 	unsigned int lastSeqClient;				/* Ultimo numero di sequenza ricevuto dal CLient */
@@ -48,7 +48,7 @@ ClientNode* newNode(unsigned int sockfd, char *ip, unsigned int clientPort, pthr
 		strcpy(node -> ip, ip);
 		node -> clientPort = clientPort;
 
-		node -> clientTid = tid;
+		node -> tid = tid;
 		node -> serverPort = serverPort;
 
 		node -> lastSeqClient = atoi(lastSeqClient);

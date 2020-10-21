@@ -55,7 +55,7 @@ int main(int argc, char *argv[])
 
     pthread_t tid;
 
-    ClientNode *tmp;
+    ClientNode *client;
 
     /* Struct sockaddr_in server */
     struct sockaddr_in serverSocket;
@@ -74,6 +74,7 @@ int main(int argc, char *argv[])
 		printf("Error while trying to \"malloc\" a new Segment!\nClosing...\n");
 		exit(-1);
 	} 
+	bzero(rcvSegment, sizeof(Segment));
 
     ThreadArgs *threadArgs = (ThreadArgs *)malloc(sizeof(ThreadArgs));
 	if(threadArgs == NULL)
@@ -81,7 +82,8 @@ int main(int argc, char *argv[])
 		printf("Error while trying to \"malloc\" a new ThreadArgs!\nClosing...\n");
 		exit(-1);
 	}
-    
+	bzero(threadArgs, sizeof(ThreadArgs));
+
     /* Socket - UDP */
     mainSockFd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL);
     if (mainSockFd < 0){
@@ -100,58 +102,94 @@ int main(int argc, char *argv[])
     }
 
     /* Server in attesa di richieste da parte dei client */
-    while (1) {
+    while(recvfrom(mainSockFd, rcvSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, (socklen_t*)&addrlenClient) > 0) {
 
-        printf("\nWaiting for operation request...\n");
-  
-        /* Receive file name */
-        bzero(rcvSegment, sizeof(Segment));
-        bzero(threadArgs, sizeof(ThreadArgs));
+        printf("\nWaiting for operation request... %s:%d\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
 
-        printf("Printf a caso\n");
-
-        /* Descrittore IP:Porta */
-        recvfrom(mainSockFd, rcvSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, (socklen_t*)&addrlenClient);
-
-        /* Controllo se il Client esiste: in caso affermativo esegui l'operazione richiesta altrimenti utilizza un thread per la fase di 3-way handshake */
-        tmp = clientList;
-        exist = 0;
-        while(tmp != NULL) {
-            if(tmp -> clientPort == ntohs(clientSocket.sin_port)) {
-                // Client esiste
-                exist = 1;
-                break;
-            }
-            tmp = tmp -> next;
+        if((strlen(rcvSegment -> eotBit) == 0) || (strlen(rcvSegment -> seqNum) == 0) || 
+           (strlen(rcvSegment -> ackNum) == 0) || (strlen(rcvSegment -> synBit) == 0) || 
+           (strlen(rcvSegment -> ackBit) == 0) || (strlen(rcvSegment -> finBit) == 0) || 
+           (strlen(rcvSegment -> winSize) == 0) || (strlen(rcvSegment -> cmdType) == 0) ||
+           (strlen(rcvSegment -> msg) == 0)) 
+        {
+        	printf("\n[Error]: Empty segment received from %s:%d\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
         }
-
-        if(exist) {
-            // switch-case operazione e tira su il thread corrispondente all' operazione
-        } 
         else {
-        	threadArgs = newThreadArgs(clientSocket, rcvSegment -> seqNum);
+        	/* Controllo se il Client esiste: in caso affermativo esegui l'operazione richiesta altrimenti utilizza un thread per la fase di 3-way handshake */
+	        client = clientList;
+	        exist = 0;
+	        while(client != NULL) {
+	            if(client -> clientPort == ntohs(clientSocket.sin_port)) {
+	                // Client esiste
+	                exist = 1;
+	                break;
+	            }
+	            client = client -> next;
+	        }
 
-            /* Creazione di un thread utile alla fase di handshake */
-            ret = pthread_create(&tid, NULL, client_thread_handshake, (void *)threadArgs);
-            if(ret != 0)
-            {
-                printf("New client thread error\n");
-                exit(-1);
-            }
+	        if(exist) {
+	            /* Controlliamo se rcvSegment è un segmento valido */
+	        	if(((atoi(rcvSegment -> ackBit) != 1) || (atoi(rcvSegment -> ackNum) != (client -> lastSeqServer + 1))) && (strlen(rcvSegment -> msg) == 0)) {
+	        		printf("Error: wrong rcvSegment received from %s:%d\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+	        		exit(-1);
+	    		}
+
+	    		/* Controlliamo se è un ACK+messaggio del SYN-ACK */
+	    		if((atoi(rcvSegment -> ackBit) == 1) && (atoi(rcvSegment -> ackNum) == (client -> lastSeqServer + 1)) && (strlen(rcvSegment -> msg) != 0)) {
+	        		/* Terminazione thread handshake */
+	    			pthread_cancel(client -> tid);
+					pthread_join(client -> tid, NULL);
+	    		}
+	    		
+	    		/* Switch operazione richiesta */
+	    		switch(atoi(rcvSegment -> cmdType)) {
+
+	    			/* list */
+	    			case 1:
+	    				break;
+
+	    			/* download */
+	    			case 2:
+	    				break;
+
+	    			/* upload */
+	    			case 3:
+	    				break;
+
+	    			/* Errore */
+	    			default:
+	    				printf("Error: wrong rcvSegment received from %s:%d\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+	        			exit(-1);
+	    				break;
+	    		}
+	    		
+	        } 
+	        else {
+	        	threadArgs = newThreadArgs(clientSocket, rcvSegment -> seqNum);
+
+	            /* Creazione di un thread utile alla fase di handshake */
+	            ret = pthread_create(&tid, NULL, client_thread_handshake, (void *)threadArgs);
+	            if(ret != 0)
+	            {
+	                printf("New client thread error\n");
+	                exit(-1);
+	            }
+	        }
+
+	        //printf("\n\nReceived packet from %d:%s:%d\n", newClient->sockfd, newClient->ip, newClient->clientPort);
+	        //printf("\nClient says: %s", net_buf);
+
+	        while(syncFlag == 0);
+	        pthread_rwlock_rdlock(&lockList);
+	        printf("\n\n---> STAMPA LISTA <---\n\n");
+	        printf("|Size: %d - MAx: %d|\n", clientListSize, maxSockFd);
+	        printList(clientList);
+	        pthread_rwlock_unlock(&lockList);
+	        syncFlag = 0;
         }
-
-        //printf("\n\nReceived packet from %d:%s:%d\n", newClient->sockfd, newClient->ip, newClient->clientPort);
-        //printf("\nClient says: %s", net_buf);
-
-        while(syncFlag == 0);
-        pthread_rwlock_rdlock(&lockList);
-        printf("\n\n---> STAMPA LISTA <---\n\n");
-        printf("|Size: %d - MAx: %d|\n", clientListSize, maxSockFd);
-        printList(clientList);
-        pthread_rwlock_unlock(&lockList);
-        syncFlag = 0;
-
-        //bzero(net_buf, NET_BUF_SIZE);
+        
+        /* Azzeramento strutture dati di ricezione */
+	    bzero(rcvSegment, sizeof(Segment));
     } 
 
     /* Distruzione semaforo R/W */
@@ -185,11 +223,15 @@ void ctrl_c_handler()
 
 /* Thread associato al client */
 void *client_thread_handshake(void *args)
-{
+{		
+	pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+
     int clientSockFd;
     int ret;
 
     ThreadArgs *threadArgs = (ThreadArgs*)args;
+    printf("\nTEST: socket for new client (%s:%d)!\n", inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port));
+
 
     /* Struct sockaddr_in server */
     struct sockaddr_in serverSocket;
@@ -217,69 +259,59 @@ void *client_thread_handshake(void *args)
 
     printf("\n\nThread creato per %s:%d, bind su %d\n\n", newClient -> ip, newClient -> clientPort, newClient -> serverPort);
 
-
     /* SYN-ACK */
     char ackNum[MAX_SEQ_ACK_NUM];
     sprintf(ackNum, "%d", atoi(threadArgs -> seqNumClient) + 1);
 
-    Segment *synAck = newSegment("0", ackNum, TRUE, TRUE, FALSE, "");
-
+    Segment *synAck = mallocSegment("0", ackNum, TRUE, TRUE, FALSE, "1", EMPTY);
 	if((ret = sendto(clientSockFd, synAck, sizeof(Segment), 0, (struct sockaddr*)&serverSocket, addrlenServer)) != sizeof(Segment)) {
         printf("Error trying to send a SYN-ACK segment to client %s:%d\n", inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port));
         exit(-1);
     }
     newClient -> lastSeqServer = 0;
 
+    /* ACK del SYN-ACK */
     Segment *rcvSegment = (Segment*) malloc(sizeof(Segment));
     if(rcvSegment == NULL)
     {
         printf("Error while trying to \"malloc\" a new ACK segment of SYN-ACK!\nClosing...\n");
         exit(-1);
     }
-    recvfrom(clientSockFd, rcvSegment, sizeof(Segment), 0, NULL, NULL);
+    
+    while(recvfrom(clientSockFd, rcvSegment, sizeof(Segment), 0, (struct sockaddr*)&serverSocket, (socklen_t*)&addrlenServer) > 0) {
+		if((strlen(rcvSegment -> eotBit) == 0) || (strlen(rcvSegment -> seqNum) == 0) || 
+           (strlen(rcvSegment -> ackNum) == 0) || (strlen(rcvSegment -> synBit) == 0) || 
+           (strlen(rcvSegment -> ackBit) == 0) || (strlen(rcvSegment -> finBit) == 0) || 
+           (strlen(rcvSegment -> winSize) == 0) || (strlen(rcvSegment -> cmdType) == 0) ||
+           (strlen(rcvSegment -> msg) == 0)) 
+        {
+        	printf("\n[Error]: Empty segment received from server\n");
+        }
+        else {
+        	break;	
+        }		
+	}
+
+    //recvfrom(clientSockFd, rcvSegment, sizeof(Segment), 0, NULL, NULL);
     if((atoi(rcvSegment -> ackBit) != 1) || (atoi(rcvSegment -> ackNum) != (newClient -> lastSeqServer + 1))) {
         printf("Error: wrong ACK of SYN-ACK received from %s:%d\n", inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port));
         exit(-1);
     }
+
+    newClient -> lastSeqClient = atoi(rcvSegment -> seqNum);
+
+    printf("\nHandshake terminated with client %s:%d\n", inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port));
+
     close(clientSockFd);
     pthread_exit(NULL);
-    // Timeout syn-ack: se dopo X secondi/minuti non ho ricevuto 
 
+    /* 
+	 *
+	 *
+	 * Timeout syn-ack: se dopo X secondi/minuti non ho ricevuto 
+	 *
+	 *
+    */
+    
 
-
-    // /* Struct sockaddr_in server */
-    // serverSocket.sin_addr.s_addr = inet_addr(inet_ntoa(clientSocket -> sin_addr)); 
-    // addrlenServer = sizeof(serverSocket);
-
-    // char net_buf[NET_BUF_SIZE];
-
-    // printf("\n\nReceived packet from %s:%d\n", inet_ntoa(clientSocket -> sin_addr), ntohs(clientSocket -> sin_port));
-
-    // clientSockFd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL); 
-
-    // /* Assegnazione dell'indirizzo locale alla socket */
-    // if (bind(clientSockFd, (struct sockaddr*)&serverSocket, addrlenServer) == 0) 
-    //     printf("\nSuccessfully thread binded!\n"); 
-    // else
-    //     printf("\nBinding thread failed!\n"); 
-
-    // sendto(clientSockFd, "SONO IL SERVER prima del while", NET_BUF_SIZE, 0, (struct sockaddr*)&serverSocket, addrlenServer);
-
-    // while(1) {
-
-    //     printf("\nThread while(1) \n");
-    //     // genera porta e verifica che non è in uso
-
-    //     //sendto(clientSockFd, "SONO IL SERVER dopo il while", NET_BUF_SIZE, 0, (struct sockaddr*)&serverSocket, addrlenServer);
-
-    //     printf("\nSendto executed\n");
-    //     fflush(stdout);
-
-    //     recvfrom(clientSockFd, net_buf, NET_BUF_SIZE, 0, (struct sockaddr*)&clientSocket, (socklen_t*)&addrlenClient); 
-    //     printf("\n\nReceived packet from %s:%d\n", inet_ntoa(clientSocket -> sin_addr), ntohs(clientSocket -> sin_port));
-    //     printf("Received: %s\n", net_buf);
-    //     bzero(net_buf, NET_BUF_SIZE);
-    // }
-
-    pthread_exit(NULL);
 }

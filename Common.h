@@ -11,6 +11,7 @@
 /**/
 #define TRUE "1"
 #define FALSE "0"
+#define EMPTY " "
 
 typedef struct _Segment
 {
@@ -25,14 +26,17 @@ typedef struct _Segment
 
 	char winSize[3];
 
+	char cmdType[2];				/* Operazione richiesta */
 	char msg[4081];
 } Segment;
 
 /* Inizializzazione di un nuovo client */
-Segment* newSegment(char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *msg) {
+Segment* mallocSegment(char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, char *msg) {
 	Segment *segment = (Segment*) malloc(sizeof(Segment));
 	if(segment != NULL)
 	{
+		strcpy(segment -> eotBit, "1");
+
 		strcpy(segment -> seqNum, seqNum);
 		strcpy(segment -> ackNum, ackNum);
 
@@ -42,6 +46,7 @@ Segment* newSegment(char *seqNum, char *ackNum, char *synBit, char *ackBit, char
 		
 		strcpy(segment -> winSize, "5");
 		
+		strcpy(segment -> cmdType, cmdType);
 		strcpy(segment -> msg, msg);
 	} else {
 		printf("Error while trying to \"malloc\" a new Segment!\nClosing...\n");
@@ -50,6 +55,27 @@ Segment* newSegment(char *seqNum, char *ackNum, char *synBit, char *ackBit, char
 
 	return segment;
 }
+
+/* Inizializzazione di un nuovo client */
+void newSegment(Segment *segment, char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, char *msg) {
+
+	bzero(segment, sizeof(Segment));
+
+	strcpy(segment -> eotBit, "1");
+
+	strcpy(segment -> seqNum, seqNum);
+	strcpy(segment -> ackNum, ackNum);
+
+	strcpy(segment -> synBit, synBit);
+	strcpy(segment -> ackBit, ackBit);
+	strcpy(segment -> finBit, finBit);
+	
+	strcpy(segment -> winSize, "5");
+	
+	strcpy(segment -> cmdType, cmdType);
+	strcpy(segment -> msg, msg);
+}
+
 
 
 #endif
