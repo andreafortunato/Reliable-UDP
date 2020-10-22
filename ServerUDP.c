@@ -99,7 +99,8 @@ int main(int argc, char *argv[])
         printf("\nBinding Failed!\n");
         exit(-1);
     }
-
+	
+	/* Blocco semi funzionante */
     // /* Server in attesa di richieste da parte dei client */
     // while(recvfrom(mainSockFd, rcvSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, (socklen_t*)&addrlenClient) > 0) {
 
