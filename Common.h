@@ -1,7 +1,6 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-
 /* Dimensione campo Seq/Ack 11 perchè il massimo valore rappresentabile
    in TCP è (2^16)-1 = 4294967295, quindi 11 caratteri */
 // Provare 2**16 pow(2,16) per elevare 2 alla 16
@@ -11,7 +10,8 @@
 /**/
 #define TRUE "1"
 #define FALSE "0"
-#define EMPTY " "
+#define EMPTY " \0"
+
 
 typedef struct _Segment
 {
@@ -29,6 +29,10 @@ typedef struct _Segment
 	char cmdType[2];				/* Operazione richiesta */
 	char msg[4081];
 } Segment;
+
+
+/* ***************************************************************************************** */
+
 
 /* Inizializzazione di un nuovo client */
 Segment* mallocSegment(char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, char *msg) {

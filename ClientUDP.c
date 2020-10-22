@@ -18,8 +18,10 @@
 int main() 
 { 
 	setbuf(stdout,NULL);
+	system("clear");
 
     int sockfd;  
+    int ret = 0;
 
     /* Struct sockaddr_in client */
     struct sockaddr_in mainServerSocket; 
@@ -30,7 +32,7 @@ int main()
 
     /* Struct sockaddr_in client */
     struct sockaddr_in operationServerSocket; 
-    int addrlenOperationServerSocket;
+    int addrlenOperationServerSocket = sizeof(operationServerSocket);
 
     /* Socket - UDP */ 
     sockfd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL); 
@@ -41,7 +43,7 @@ int main()
     
     printf("\nFile descriptor %d received!\n", sockfd); 
   	
-  	Segment *sndSegment = mallocSegment("0", EMPTY, TRUE, FALSE, FALSE, "1", EMPTY);
+  	Segment *sndSegment = mallocSegment("0", EMPTY, TRUE, FALSE, FALSE, "1", "SYN\0");
 
 	Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
 	if(rcvSegment == NULL)
@@ -54,26 +56,17 @@ int main()
     /* Fase di handshake 3-way */
     /* Invio SYN */
 	sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket);
+	printf("SYN sent to the server (%s:%d)\n", inet_ntoa(mainServerSocket.sin_addr), ntohs(mainServerSocket.sin_port));
 
 	/* Ricezione SYN-ACK */
-	while(recvfrom(sockfd, rcvSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, (socklen_t*)&addrlenOperationServerSocket) > 0) {
-		if((strlen(rcvSegment -> eotBit) == 0) || (strlen(rcvSegment -> seqNum) == 0) || 
-           (strlen(rcvSegment -> ackNum) == 0) || (strlen(rcvSegment -> synBit) == 0) || 
-           (strlen(rcvSegment -> ackBit) == 0) || (strlen(rcvSegment -> finBit) == 0) || 
-           (strlen(rcvSegment -> winSize) == 0) || (strlen(rcvSegment -> cmdType) == 0) ||
-           (strlen(rcvSegment -> msg) == 0)) 
-        {
-        	printf("\n[Error]: Empty segment received from server\n");
-        }
-        else {
-        	break;	
-        }		
-	}
+	recvfrom(sockfd, rcvSegment, sizeof(Segment), 0, (struct sockaddr*)NULL, NULL);
+	printf("\n[PKT_RECV]: Return value %d, Server information: (%s:%d)\n", ret, inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
+	printf("[MSG] %s\n", rcvSegment -> msg);
 	
 	/* Invio ACK del SYN-ACK */
-	newSegment(sndSegment, "1", "1", FALSE, TRUE, FALSE, "1", EMPTY);
-	printf("\nPrima dell'invio dell'ACK\n");
+	newSegment(sndSegment, "1", "1", FALSE, TRUE, FALSE, "1", "ACK del SYN-ACK\0");
 	sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
+	printf("\nACK sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
 	printf("\nHandshake terminated!\n");
 	/* Fine handshake */
 

@@ -3,27 +3,33 @@
 
 #include "Common.h"
 
+
 /* Struttura associata al singolo client */
 typedef struct _ClientNode {
 	unsigned int sockfd;					/* Descrittore del socket */
 	char ip[16];							/* IP Address */
 	unsigned int clientPort;				/* Porta sorgente del Client */
  
-	pthread_t tid;					/* Thread ID temporaneo associato al Client */
+	pthread_t tid;							/* Thread ID temporaneo associato al Client */
 	unsigned int serverPort;				/* Porta del server riservata al Client*/
 
-	unsigned int lastSeqClient;				/* Ultimo numero di sequenza ricevuto dal CLient */
+	unsigned int lastSeqClient;				/* Ultimo numero di sequenza ricevuto dal Client */
 	unsigned int lastSeqServer;				/* Ultimo numero di sequenza inviato al Client */
 
 	struct _ClientNode *next;				/* Puntatore a ClientNode successivo */
 	struct _ClientNode *prev;   			/* Puntatore a ClientNode precedente */
 } ClientNode;
 
+
 /* Struttura per il passaggio di dati alla creazione di un nuovo thread */
 typedef struct _ThreadArgs {
 	struct sockaddr_in clientSocket;
 	char seqNumClient[11];
 } ThreadArgs;
+
+
+/* ***************************************************************************************** */
+
 
 ThreadArgs* newThreadArgs(struct sockaddr_in clientSocket, char *seqNumClient) {
 	ThreadArgs *threadArgs = (ThreadArgs *) malloc(sizeof(ThreadArgs));
