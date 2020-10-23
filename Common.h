@@ -80,6 +80,228 @@ void newSegment(Segment *segment, char *seqNum, char *ackNum, char *synBit, char
 	strcpy(segment -> msg, msg);
 }
 
+/* Conversione intera stringa in minuscolo */
+char *tolowerString(char *string)
+{
+	int i = 0;
+	char *tmp = malloc(strlen(string));
 
+	strcpy(tmp, string);
+	while((tmp[i] = tolower(tmp[i])))
+		i++;
+
+	return tmp;
+}
+
+/* Controllo dei parametri iniziali */
+int parseCmdLine(int argc, char **argv, char *who, char **ip, int *debug)
+{
+	int port;
+
+	/* Il chiamante è il server */
+	if(strcmp(who, "server") == 0)
+	{
+		switch(argc)
+		{
+			/* Help */
+			case 2:
+				if(!strcmp(tolowerString(argv[1]), "-h") || !strcmp(tolowerString(argv[1]), "-help") || !strcmp(tolowerString(argv[1]), "--h") || !strcmp(tolowerString(argv[1]), "--help"))
+					printf("Syntax:\n\t %s -p PORT_NUMBER [-d, -debug]\n", argv[0]);
+				else
+					printf("For more information run \033[2;3m%s -h\033[0m\n", argv[0]);
+				return -1;
+
+				break;
+
+			/* Caso 'corretto' */
+			case 3:
+				port = atoi(argv[2]);
+				if(strcmp(tolowerString(argv[1]), "-p"))
+				{
+					printf("Syntax:\n\t %s -p PORT_NUMBER [-d, -debug]\n", argv[0]);
+					return -1;
+				}
+				else if(port < 1024 || port > 65535)
+				{
+					printf("PORT_NUMBER must be a number between 1024 and 65535\n");
+					return -1;
+				}
+				else
+					return port;
+
+				break;
+
+			case 4:
+				port = atoi(argv[2]);
+				if(strcmp(tolowerString(argv[1]), "-p"))
+				{
+					printf("Syntax:\n\t %s -p PORT_NUMBER [-d, -debug]\n", argv[0]);
+					return -1;
+				}
+				else if(port < 1024 || port > 65535)
+				{
+					printf("PORT_NUMBER must be a number between 1024 and 65535\n");
+					return -1;
+				}
+				else
+				{
+					if(!strcmp(tolowerString(argv[3]), "-d") || !strcmp(tolowerString(argv[3]), "-debug"))
+						*debug = 1;
+					else
+					{
+						printf("Syntax:\n\t %s -p PORT_NUMBER [-d, -debug]\n", argv[0]);
+						return -1;
+					}
+
+					return port;
+				}
+
+				break;
+
+			default:
+				printf("Syntax:\n\t %s -p PORT_NUMBER [-d, -debug]\n", argv[0]);
+				return -1;
+
+				break;
+		}
+	}
+	/* Il chiamante è il client */
+	else
+	{
+		switch(argc)
+		{
+			/* Help */
+			case 2:
+				if(!strcmp(tolowerString(argv[1]), "-h") || !strcmp(tolowerString(argv[1]), "-help") || !strcmp(tolowerString(argv[1]), "--h") || !strcmp(tolowerString(argv[1]), "--help"))
+					printf("Syntax:\n\t %s -a IP_ADDRESS -p PORT_NUMBER [-d, -debug]\n", argv[0]);
+				else
+					printf("For more information run \033[2;3m%s -h\033[0m\n", argv[0]);
+				return -1;
+
+				break;
+
+			/* Caso 'corretto' */
+			case 5:
+				if(strcmp(tolowerString(argv[1]), "-a") || strcmp(tolowerString(argv[3]), "-p"))
+				{
+					printf("Syntax:\n\t %s -a IP_ADDRESS -p PORT_NUMBER [-d, -debug]\n", argv[0]);
+					return -1;
+				}
+				else
+				{
+					port = atoi(argv[4]); 
+					if(port < 1024 || port > 65535)
+					{
+						printf("PORT_NUMBER must be a number between 1024 and 65535!\n");
+						return -1;
+					}
+
+					if(!strcmp(tolowerString(argv[2]), "local") || !strcmp(tolowerString(argv[2]), "localhost") || !strcmp(tolowerString(argv[2]), "-l"))
+						strcpy(*ip, "127.0.0.1");
+
+					/* Controllo sintassi IP (deve contenere esattamente 3 punti e deve essere un IP valido) */
+					else
+					{
+						int i;
+						char *dotsIp = strstr(argv[2], ".");
+						if(dotsIp != NULL)
+							dotsIp++;
+						else
+						{
+							printf("%s is not a valid IP address!\n", argv[2]);
+							return -1;
+						}
+
+						for(i = 0; i < 2; i++)
+						{
+							if((dotsIp = strstr(dotsIp, ".")) == NULL)
+								break;
+							
+							dotsIp++;
+						}
+						
+						if(i != 2 || (inet_addr(argv[2]) == INADDR_NONE))
+						{
+							printf("%s is not a valid IP address!\n", argv[2]);
+							return -1;
+						}
+						else
+							strcpy(*ip, argv[2]);
+					}
+				}
+				return port;
+
+				break;
+
+			case 6:
+				if(strcmp(tolowerString(argv[1]), "-a") || strcmp(tolowerString(argv[3]), "-p"))
+				{
+					printf("Syntax:\n\t %s -a IP_ADDRESS -p PORT_NUMBER [-d, -debug]\n", argv[0]);
+					return -1;
+				}
+				else
+				{
+					port = atoi(argv[4]); 
+					if(port < 1024 || port > 65535)
+					{
+						printf("PORT_NUMBER must be a number between 1024 and 65535!\n");
+						return -1;
+					}
+
+					if(!strcmp(tolowerString(argv[2]), "local") || !strcmp(tolowerString(argv[2]), "localhost") || !strcmp(tolowerString(argv[2]), "-l"))
+						strcpy(*ip, "127.0.0.1");
+
+					/* Controllo sintassi IP (deve contenere esattamente 3 punti e deve essere un IP valido) */
+					else
+					{
+						int i;
+						char *dotsIp = strstr(argv[2], ".");
+						if(dotsIp != NULL)
+							dotsIp++;
+						else
+						{
+							printf("%s is not a valid IP address!\n", argv[2]);
+							return -1;
+						}
+
+						for(i = 0; i < 2; i++)
+						{
+							if((dotsIp = strstr(dotsIp, ".")) == NULL)
+								break;
+							
+							dotsIp++;
+						}
+						
+						if(i != 2 || (inet_addr(argv[2]) == INADDR_NONE))
+						{
+							printf("%s is not a valid IP address!\n", argv[2]);
+							return -1;
+						}
+						else
+							strcpy(*ip, argv[2]);
+					}
+				}
+
+				if(!strcmp(tolowerString(argv[5]), "-d") || !strcmp(tolowerString(argv[5]), "-debug"))
+					*debug = 1;
+				else
+				{
+					printf("Syntax:\n\t %s -a IP_ADDRESS -p PORT_NUMBER [-d, -debug]\n", argv[0]);
+
+					return -1;
+				}
+
+				return port;
+
+				break;
+			
+			default:
+				printf("Syntax:\n\t %s -a IP_ADDRESS -p PORT_NUMBER [-d, -debug]\n", argv[0]);
+				return -1;
+				
+				break;
+		}
+	}
+}
 
 #endif

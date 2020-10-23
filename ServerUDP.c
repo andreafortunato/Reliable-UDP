@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <signal.h>
+#include <ctype.h>
 #include "Server.h"
 
 #define IP_PROTOCOL 0
@@ -21,14 +22,13 @@
 typedef struct sockaddr_in Sockaddr_in;
 
 /* Prototipi */
-void *client_thread_handshake(void *);                /* Thread associato al client */
+void *client_thread_handshake(void *);      /* Thread associato al client */
 void ctrl_c_handler();
 
 /* Variabili globali */
 pthread_rwlock_t lockList;                  /* Semaforo Read/Write necessario per la gestione degli accessi alla lista */
 int syncFlag = 0;
-
-int len;
+int debug = 0;                              /* Se l'utente ha avviato in modalità debug, verranno mostrate informazioni aggiuntive */
 
 ClientNode *clientList = NULL;
 int clientListSize = 0;
@@ -38,12 +38,12 @@ int maxSockFd = 0;
 int main(int argc, char *argv[])
 {
     /* Inizializzazione sessione server */
-    system("clear");
     setbuf(stdout,NULL);
     srand(time(0));
+    system("clear");
 
     /* Gestione del SIGINT (Ctrl+C) */
-    signal(SIGINT, ctrl_c_handler);
+    //signal(SIGINT, ctrl_c_handler);
 
     /* Inizializzazione semaforo R/W */
     if(pthread_rwlock_init(&lockList, NULL) != 0) {
@@ -51,6 +51,12 @@ int main(int argc, char *argv[])
         exit(-1);
     }
     
+    /* Parse dei parametri passati da riga di comando */
+    int port = parseCmdLine(argc, argv, "server", NULL, &debug);
+    if(port == -1)
+    {
+        exit(0);
+    }
 
     /* Scrive in 'filesList' la lista dei file nella directory eccetto il file eseguibile del server */
     /*
@@ -94,8 +100,8 @@ int main(int argc, char *argv[])
     Sockaddr_in serverSocket;
     bzero(&serverSocket, sizeof(Sockaddr_in));
     serverSocket.sin_family = AF_INET;
-    serverSocket.sin_port = htons(PORT);
     serverSocket.sin_addr.s_addr = htonl(INADDR_ANY);
+    serverSocket.sin_port = htons(port);
     int addrlenServer = sizeof(serverSocket);
 
     /* Sockaddr_in client */
@@ -282,7 +288,6 @@ void *client_thread_handshake(void *args)
     /* Sockaddr_in server */
     Sockaddr_in serverSocket;
     serverSocket.sin_family = AF_INET;
-    //serverSocket.sin_addr.s_addr = htonl(INADDR_ANY);
     serverSocket.sin_addr.s_addr = inet_addr(inet_ntoa(clientSocket.sin_addr));
     int addrlenServer = sizeof(serverSocket);
 
