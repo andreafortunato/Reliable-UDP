@@ -217,4 +217,44 @@ void printList(ClientNode *clientList) {
 	printf("|-----------------------------|\n");
 }
 
+/* Ritorna in 'fileList' la lista dei file nella directory del server
+   escluse le cartelle ed il file eseguibile del server */
+char* invokeFileList(char *serverName) {
+    char listFileCmd[64];
+    FILE *fp;
+    char path[256];
+    char *fileList = malloc(1);
+    if(fileList == NULL){
+		printf("Error while trying to \"malloc\" a new fileList!\nClosing...\n");
+		exit(-1);
+	}
+
+    sprintf(listFileCmd, "ls -p | grep -v / | grep -v \"%s\"", serverName);
+
+    fp = popen(listFileCmd, "r");
+    if (fp == NULL){
+        printf("Error while trying to run the 'List file' command!\nClosing...\n");
+		exit(-1);
+    }
+
+
+    while (fgets(path, 512, fp) != NULL){
+        fileList = realloc(fileList, strlen(fileList) + strlen(path));
+        if(fileList == NULL) {
+        	printf("Error while trying to \"realloc\" the fileList string!\nClosing...\n");
+			exit(-1);
+        }
+        strcat(fileList, path);
+    }
+
+    printf("\n\nLista dei files:\n%s\n",fileList);
+
+    if (pclose(fp) == -1) {
+        printf("Error while trying to close the process for 'List file' command!\nClosing...\n");
+		exit(-1);
+    }
+
+    return fileList;
+}
+
 #endif

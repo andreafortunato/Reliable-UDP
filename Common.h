@@ -10,8 +10,9 @@
 /**/
 #define TRUE "1"
 #define FALSE "0"
-#define EMPTY " \0"
+#define EMPTY " "
 
+typedef struct sockaddr_in Sockaddr_in;
 
 typedef struct _Segment
 {
@@ -39,6 +40,8 @@ Segment* mallocSegment(char *seqNum, char *ackNum, char *synBit, char *ackBit, c
 	Segment *segment = (Segment*) malloc(sizeof(Segment));
 	if(segment != NULL)
 	{
+		bzero(segment, sizeof(Segment));
+
 		strcpy(segment -> eotBit, "1");
 
 		strcpy(segment -> seqNum, seqNum);
@@ -108,7 +111,7 @@ int parseCmdLine(int argc, char **argv, char *who, char **ip, int *debug)
 				if(!strcmp(tolowerString(argv[1]), "-h") || !strcmp(tolowerString(argv[1]), "-help") || !strcmp(tolowerString(argv[1]), "--h") || !strcmp(tolowerString(argv[1]), "--help"))
 					printf("Syntax:\n\t %s -p PORT_NUMBER [-d, -debug]\n", argv[0]);
 				else
-					printf("For more information run \033[2;3m%s -h\033[0m\n", argv[0]);
+					printf("For more information run: \n\t\033[2;3m%s -h\033[0m\n", argv[0]);
 				return -1;
 
 				break;
@@ -302,6 +305,26 @@ int parseCmdLine(int argc, char **argv, char *who, char **ip, int *debug)
 				break;
 		}
 	}
+}
+
+void recvSegment(int sockFd, Segment *segment, Sockaddr_in *socket, int *socketLen) {
+	while(1){
+            if(recvfrom(sockFd, segment, sizeof(Segment), 0, (struct sockaddr*)socket, (socklen_t*)socketLen) < 0) {
+                printf("[Error]: recvfrom failed for %s:%d\n", inet_ntoa(socket -> sin_addr), ntohs(socket -> sin_port));
+                exit(-1);
+            }
+            if((strlen(segment -> eotBit) == 0) || (strlen(segment -> seqNum) == 0) || 
+               (strlen(segment -> ackNum) == 0) || (strlen(segment -> synBit) == 0) || 
+               (strlen(segment -> ackBit) == 0) || (strlen(segment -> finBit) == 0) || 
+               (strlen(segment -> winSize) == 0) || (strlen(segment -> cmdType) == 0) ||
+               (strlen(segment -> msg) == 0)) 
+            {
+                printf("\n[Error]: Empty segment received from client %s:%d\n", inet_ntoa(socket -> sin_addr), ntohs(socket -> sin_port));
+            }
+            else {
+                break;  
+            }
+        }
 }
 
 #endif

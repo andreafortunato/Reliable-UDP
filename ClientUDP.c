@@ -12,12 +12,15 @@
 #include <ctype.h>
 #include "Client.h"
   
-#define IP_PROTOCOL 0 
-#define IP_SERVER_ADDRESS "127.0.0.1" 
-#define PORT 5555 
-#define NET_BUF_SIZE 32 
+#define IP_PROTOCOL 0       /* Protocollo UDP default */
 
-int debug = 0;
+typedef struct sockaddr_in Sockaddr_in;
+
+int debug = 0;              /* 1 se l'utente vuole avviare il client in modalità 'Debug' 
+                               per visualizzare informazioni aggiuntive, 0 altrimenti */
+
+int lastSeqNumSend;
+int lastSeqNumRecv;
 
 // Main - Client
 int main(int argc, char *argv[]) 
@@ -27,7 +30,7 @@ int main(int argc, char *argv[])
 	system("clear");
 
     int sockfd;  
-    int ret = 0;
+    int ret;
     int choice;
 
     char *ip = malloc(16*sizeof(char));
@@ -44,27 +47,26 @@ int main(int argc, char *argv[])
         exit(0);
     }    
 
-    /* Struct sockaddr_in client */
-    struct sockaddr_in mainServerSocket; 
+    /* Sockaddr_in server, utilizzata per l'handshake e le richieste di operazioni */
+    Sockaddr_in mainServerSocket; 
     mainServerSocket.sin_family = AF_INET;
     mainServerSocket.sin_addr.s_addr = inet_addr(ip);
     mainServerSocket.sin_port = htons(port); 
     int addrlenMainServerSocket = sizeof(mainServerSocket);
 
-    /* Struct sockaddr_in client */
-    struct sockaddr_in operationServerSocket; 
+    /* Sockaddr_in server, utilizzata per l'esecuzione delle operazioni */
+    Sockaddr_in operationServerSocket; 
     int addrlenOperationServerSocket = sizeof(operationServerSocket);
 
-    /* Socket - UDP */ 
-    sockfd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL); 
+    /* Creazione socket - UDP */ 
+    sockfd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL);
     if (sockfd < 0) {
-    	wprintf(L"\nFile descriptor not received!\n"); 
+    	wprintf(L"\nFile descriptor not received!\n");
     	exit(-1);
     }
     
-    wprintf(L"\nFile descriptor %d received!\n", sockfd); 
-  	
-  	Segment *sndSegment = mallocSegment("0", EMPTY, TRUE, FALSE, FALSE, "1", "SYN");
+    /* Creazione segmenti di invio/ricezione */
+  	Segment *sndSegment = mallocSegment("1", EMPTY, TRUE, FALSE, FALSE, EMPTY, EMPTY);
 
 	Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
 	if(rcvSegment == NULL)
@@ -80,40 +82,44 @@ int main(int argc, char *argv[])
 	wprintf(L"SYN sent to the server (%s:%d)\n", inet_ntoa(mainServerSocket.sin_addr), ntohs(mainServerSocket.sin_port));
 
 	/* Ricezione SYN-ACK */
-	recvfrom(sockfd, rcvSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, (socklen_t*)&addrlenOperationServerSocket);
-	wprintf(L"\n[PKT_RECV]: Return value %d, Server information: (%s:%d)\n", ret, inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
-	wprintf(L"[MSG] %s\n", rcvSegment -> msg);
-	/* Invio ACK del SYN-ACK */
-	newSegment(sndSegment, "1", "1", FALSE, TRUE, FALSE, "1", "ACK del SYN-ACK");
+    recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket);
+	wprintf(L"\n[PKT_RECV]: Server information: (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
+	
+    /* Invio ACK del SYN-ACK */
+    char ackNum[MAX_SEQ_ACK_NUM];
+    sprintf(ackNum, "%d", atoi(rcvSegment -> seqNum) + 1);
+	newSegment(sndSegment, "2", ackNum, FALSE, TRUE, FALSE, EMPTY, EMPTY);
 	sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
 	wprintf(L"\nACK sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
 	wprintf(L"\nHandshake terminated!\n");
 	/* Fine handshake */
     
-    close(sockfd);
-    //exit(0);
-
-    while (1) { 
-
-        system("clear");
+    while (1) {
+        //system("clear");
         choice = clientChoice();
-        wprintf(L"\nChoice: %d\n", choice);
-        sleep(3);
 
-        // wprintf(L"\nPlease enter message for the server: "); 
-        // scanf("%s", net_buf); 
+        switch(choice) {
+            case 1:
+                newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "1", EMPTY);
+                sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket);
+                lastSeqNumSend = 1;
+                
+                recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket);
+                lastSeqNumRecv = atoi(rcvSegment -> seqNum);
 
-        // sendto(sockfd, net_buf, NET_BUF_SIZE, 0, (struct sockaddr*)&clientSocket, addrlenClient); 
-        
-        // bzero(net_buf, NET_BUF_SIZE);
+                wprintf(L"File list:\n%s\n", rcvSegment -> msg);
+                break;
 
-        // recvfrom(sockfd, net_buf, NET_BUF_SIZE, 0, (struct sockaddr*)&serverSocket, &addrlenServer); 
+            case 2:
+                break;
 
-        // wprintf(L"\n\nReceived packet from %s:%d\n", inet_ntoa(serverSocket.sin_addr), ntohs(serverSocket.sin_port));
-        // wprintf(L"Received: %s\n", net_buf);
-        // bzero(net_buf, NET_BUF_SIZE);
+            case 3:
+                break;
 
-        // wprintf(L"\n--------------------------------\n"); 
+            case 4:
+                break;
+        }
+
     } 
 
     return 0; 
