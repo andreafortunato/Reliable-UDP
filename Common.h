@@ -308,6 +308,8 @@ int parseCmdLine(int argc, char **argv, char *who, char **ip, int *debug)
 }
 
 void recvSegment(int sockFd, Segment *segment, Sockaddr_in *socket, int *socketLen) {
+
+	bzero(segment, sizeof(Segment));
 	while(1){
             if(recvfrom(sockFd, segment, sizeof(Segment), 0, (struct sockaddr*)socket, (socklen_t*)socketLen) < 0) {
                 printf("[Error]: recvfrom failed for %s:%d\n", inet_ntoa(socket -> sin_addr), ntohs(socket -> sin_port));

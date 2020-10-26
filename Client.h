@@ -58,4 +58,8 @@ int clientChoice()
 	return choice;
 }
 
+void download() {
+	return;
+}
+
 #endif

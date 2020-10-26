@@ -33,6 +33,8 @@ int main(int argc, char *argv[])
     int ret;
     int choice;
 
+    char filename[256];
+
     char *ip = malloc(16*sizeof(char));
     if(ip == NULL)
     {
@@ -111,6 +113,14 @@ int main(int argc, char *argv[])
                 break;
 
             case 2:
+                newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "2", EMPTY);
+                wprintf(L"Filename: ");
+                scanf("%s", sndSegment -> msg);
+                sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket);
+
+                recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket);
+                wprintf(L"File: %s", rcvSegment -> msg);
+
                 break;
 
             case 3:
