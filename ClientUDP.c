@@ -117,7 +117,7 @@ int main(int argc, char *argv[])
                 wprintf(L"Filename: ");
                 scanf("%s", sndSegment -> msg);
                 sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket);
-
+                
                 recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket);
                 wprintf(L"File: %s", rcvSegment -> msg);
 

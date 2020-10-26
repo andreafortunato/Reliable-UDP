@@ -191,9 +191,11 @@ int main(int argc, char *argv[])
 
     			/* download */
     			case 2:
-                    printf("\nDownload request...\n");
+                    printf("\nDownload required by the client: (%s:%d)\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+                    
                     threadArgs = newThreadArgs(clientSocket, *rcvSegment, client);
-                    printf("\nSto nel main thread case 2: %d | (%s:%d)\n", threadArgs -> client -> sockfd, threadArgs -> client -> ip, threadArgs -> client -> clientPort);                    
+                    printf("-> threadArgs for client download (%s:%d)!\n", inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port));
+                    printf("-> Client info (%s:%d)\n", threadArgs -> client -> ip, threadArgs -> client -> clientPort);
 
                     /* Creazione di un thread utile alla fase di download */
                     ret = pthread_create(&tid, NULL, client_thread_download, (void *)threadArgs);
@@ -226,12 +228,12 @@ int main(int argc, char *argv[])
             {
                 printf("New client thread error\n");
                 exit(-1);
-            }
-
-            /* Attesa dell'aggiunta del nuovo client */
-            while(syncFlag == 0);
-            syncFlag = 0;
+            }            
         }
+
+        /* Attesa dell'aggiunta del nuovo client */
+        while(syncFlag == 0);
+        syncFlag = 0;
     } 
 
     /* Distruzione semaforo R/W */
@@ -282,6 +284,8 @@ void *client_thread_handshake(void *args)
     Sockaddr_in clientSocket;
     clientSocket = threadArgs -> clientSocket;
     int addrlenClient = sizeof(clientSocket);
+
+    printf("\n[TEST]: threadArgs for client handshake (%s:%d)!\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
 
     /* Sockaddr_in server */
     Sockaddr_in serverSocket;
@@ -370,7 +374,15 @@ void *client_thread_download(void *args)
     int clientSockFd;
     int ret;
 
+    pthread_rwlock_wrlock(&lockList);
     ThreadArgs *threadArgs = (ThreadArgs*)args;
+    printf("\n\nThread for download for (%s:%d)\n", threadArgs -> client -> ip, threadArgs -> client -> clientPort);
+    pthread_rwlock_unlock(&lockList);
+    syncFlag = 1;
+    
+    printf("[TEST]: threadArgs for client download (%s:%d)!\n", inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port));
+    printf("Thread for download for (%s:%d)\n", threadArgs -> client -> ip, threadArgs -> client -> clientPort);
+
 
     /* Sockaddr_in client */
     Sockaddr_in clientSocket;
@@ -394,10 +406,6 @@ void *client_thread_download(void *args)
         serverSocket.sin_port = htons(1024 + rand() % (65535+1 - 1024));
     } while(bind(clientSockFd, (struct sockaddr*)&serverSocket, addrlenServer) != 0);
 
-    printf("\n[TEST]: threadArgs for client download (%s:%d)!\n", inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port));
-
-
-    //printf("\n\nThread for download for (%s:%d), bind on %d\n", threadArgs -> client -> ip, threadArgs -> client -> clientPort, serverSocket.sin_port);
 
     // /* Se il file è presente nel server */
     // if(fileExist(serverFileName, (threadArgs -> segment).msg)) {

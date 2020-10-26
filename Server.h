@@ -33,7 +33,7 @@ typedef struct _ThreadArgs {
 /* ***************************************************************************************** */
 
 
-ThreadArgs* newThreadArgs(struct sockaddr_in clientSocket, Segment segment, ClientNode *client) {
+ThreadArgs* newThreadArgs(Sockaddr_in clientSocket, Segment segment, ClientNode *client) {
 	ThreadArgs *threadArgs = (ThreadArgs *) malloc(sizeof(ThreadArgs));
 	if(threadArgs != NULL)
 	{
