@@ -368,26 +368,22 @@ void *client_thread_list(void *args)
 
 /* Thread associato al client */
 void *client_thread_download(void *args)
-{       
-    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
-
+{    
     int clientSockFd;
     int ret;
 
-    pthread_rwlock_wrlock(&lockList);
     ThreadArgs *threadArgs = (ThreadArgs*)args;
-    printf("\n\nThread for download for (%s:%d)\n", threadArgs -> client -> ip, threadArgs -> client -> clientPort);
-    pthread_rwlock_unlock(&lockList);
-    syncFlag = 1;
-    
-    printf("[TEST]: threadArgs for client download (%s:%d)!\n", inet_ntoa(threadArgs -> clientSocket.sin_addr), ntohs(threadArgs -> clientSocket.sin_port));
-    printf("Thread for download for (%s:%d)\n", threadArgs -> client -> ip, threadArgs -> client -> clientPort);
 
+    ClientNode *client = threadArgs -> client;
+    Segment rcvSegment = threadArgs -> segment;
+    printf("Thread for download for (%s:%d)\n", client -> ip, client -> clientPort);
 
     /* Sockaddr_in client */
     Sockaddr_in clientSocket;
     clientSocket = threadArgs -> clientSocket;
     int addrlenClient = sizeof(clientSocket);
+
+    syncFlag = 1;
 
     /* Sockaddr_in server */
     Sockaddr_in serverSocket;
@@ -407,25 +403,51 @@ void *client_thread_download(void *args)
     } while(bind(clientSockFd, (struct sockaddr*)&serverSocket, addrlenServer) != 0);
 
 
-    // /* Se il file è presente nel server */
-    // if(fileExist(serverFileName, (threadArgs -> segment).msg)) {
+    /* Se il file è presente nel server */
+    if(fileExist(serverFileName, rcvSegment.msg)) {
 
-    //     // Aprire il file da inviare e scriverlo dentro sndSegment...
-    //     FILE *file = fopen((threadArgs -> segment).msg, "r");
-    //     char buffFile[4081];
+        // Aprire il file da inviare e scriverlo dentro sndSegment...
+        FILE *file = fopen(rcvSegment.msg, "rb");
+        char buffFile[4081];
+        char rowBuff[4081];
 
-    //     fscanf(file,"%4080[^\n]",buffFile);
-    //     printf("\nFile: \n%s", buffFile);
+        char newLine[2];
+        int len, i=1;
+        int byteReades;
 
-    //      ACK+DATI della richiesta di download da parte del client 
-    //     char ackNum[MAX_SEQ_ACK_NUM];
-    //     sprintf(ackNum, "%d", atoi((threadArgs -> segment).seqNum) + 1);
-    //     Segment *sndSegment = mallocSegment("1", ackNum, FALSE, TRUE, FALSE, "2", buffFile);
-    //     //sendto(clientSockFd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
-    // }
-    // else {
+        /*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
 
-    // }
+                                /* Codice per leggere e scrivere un nuovo file */
+
+        FILE *wrFile = fopen("cuore1.png", "wb");
+
+        fseek(file, 0, SEEK_END);
+        int fileLen = ftell(file);
+        fseek(file, 0, SEEK_SET);
+
+        for(i=0; i<fileLen; i++) {
+            buffFile[i] = fgetc(file);
+        }
+
+        for(i=0; i<fileLen; i++) {
+            fputc(buffFile[i],wrFile);
+        }
+        //fprintf(wrFile, "%s", buffFile);
+        fclose(file);
+        fclose(wrFile);
+
+        /*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
+
+        // ACK+DATI della richiesta di download da parte del client 
+        char ackNum[MAX_SEQ_ACK_NUM];
+        sprintf(ackNum, "%d", atoi(rcvSegment.seqNum) + 1);
+        Segment *sndSegment = mallocSegment("1", ackNum, FALSE, TRUE, FALSE, "2", buffFile);
+        printf("\nFILE: \n->%s<-\nLunghezza: %d\n", buffFile, strlen(buffFile));
+        //sendto(clientSockFd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
+    }
+    else {
+        printf("\nFile not found!\n");
+    }
 
 
     close(clientSockFd);
