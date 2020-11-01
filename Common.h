@@ -34,37 +34,10 @@ typedef struct _Segment
 
 /* ***************************************************************************************** */
 
-
 /* Inizializzazione di un nuovo client */
-Segment* mallocSegment(char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, char *msg) {
-	Segment *segment = (Segment*) malloc(sizeof(Segment));
-	if(segment != NULL)
-	{
-		bzero(segment, sizeof(Segment));
+void newSegment(Segment *segment, char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, char *msg, int lenFile) {
 
-		strcpy(segment -> eotBit, "1");
-
-		strcpy(segment -> seqNum, seqNum);
-		strcpy(segment -> ackNum, ackNum);
-
-		strcpy(segment -> synBit, synBit);
-		strcpy(segment -> ackBit, ackBit);
-		strcpy(segment -> finBit, finBit);
-		
-		strcpy(segment -> winSize, "5");
-		
-		strcpy(segment -> cmdType, cmdType);
-		strcpy(segment -> msg, msg);
-	} else {
-		printf("Error while trying to \"malloc\" a new Segment!\nClosing...\n");
-		exit(-1);
-	}
-
-	return segment;
-}
-
-/* Inizializzazione di un nuovo client */
-void newSegment(Segment *segment, char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, char *msg) {
+	int i;
 
 	bzero(segment, sizeof(Segment));
 
@@ -80,14 +53,43 @@ void newSegment(Segment *segment, char *seqNum, char *ackNum, char *synBit, char
 	strcpy(segment -> winSize, "5");
 	
 	strcpy(segment -> cmdType, cmdType);
-	strcpy(segment -> msg, msg);
+	
+	if(lenFile == -1) {
+		strcpy(segment -> msg, msg);
+		return;
+	}
+
+	for(i = 0; i < lenFile; i++) 
+		(segment -> msg)[i] = msg[i];
+
+	printf("\n%d\n", i);
+}
+
+/* Inizializzazione di un nuovo client */
+Segment* mallocSegment(char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, char *msg, int lenFile) {
+	Segment *segment = (Segment*) malloc(sizeof(Segment));
+	if(segment != NULL)
+	{
+		newSegment(segment, seqNum, ackNum, synBit, ackBit, finBit, cmdType, msg, lenFile);
+	} else {
+		printf("Error while trying to \"malloc\" a new Segment!\nClosing...\n");
+		exit(-1);
+	}
+
+	return segment;
 }
 
 /* Conversione intera stringa in minuscolo */
 char *tolowerString(char *string)
 {
 	int i = 0;
+	
 	char *tmp = malloc(strlen(string));
+	if(tmp == NULL) {
+		printf("Error while trying to \"malloc\" a new toLowerString!\nClosing...\n");
+		exit(-1);
+	}
+	bzero(tmp, strlen(string));
 
 	strcpy(tmp, string);
 	while((tmp[i] = tolower(tmp[i])))

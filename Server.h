@@ -30,13 +30,13 @@ typedef struct _ThreadArgs {
 } ThreadArgs;
 
 
-/* ***************************************************************************************** */
-
+/* ************************************************************************************************************************************* */
 
 ThreadArgs* newThreadArgs(Sockaddr_in clientSocket, Segment segment, ClientNode *client) {
 	ThreadArgs *threadArgs = (ThreadArgs *) malloc(sizeof(ThreadArgs));
 	if(threadArgs != NULL)
-	{
+	{	
+		bzero(threadArgs, sizeof(ThreadArgs));
 		threadArgs -> clientSocket = clientSocket;
 		threadArgs -> segment = segment;
 		if(client) {
@@ -54,7 +54,8 @@ ThreadArgs* newThreadArgs(Sockaddr_in clientSocket, Segment segment, ClientNode 
 ClientNode* newNode(unsigned int sockfd, char *ip, unsigned int clientPort, pthread_t tid, unsigned int serverPort, char *lastSeqClient) {
 	ClientNode *node = (ClientNode *) malloc(sizeof(ClientNode));
 	if(node != NULL)
-	{
+	{	
+		bzero(node, sizeof(ClientNode));
 		node -> sockfd = sockfd;
 		strcpy(node -> ip, ip);
 		node -> clientPort = clientPort;
@@ -206,14 +207,14 @@ void printList(ClientNode *clientList) {
 	{
 		printf("\n");
 		if(clientList->prev)
-			printf("Prev: %d\n", clientList->prev->sockfd);
+			printf("Prev: %d\n", clientList->prev->clientPort);
 		else
 			printf("Prev: NULL\n");
 
 		printf("Sockfd: %d\nIP: %s\nPort: %d\n", clientList->sockfd, clientList->ip, clientList->clientPort);
 		
 		if(clientList->next)
-			printf("Next: %d\n", clientList->next->sockfd);
+			printf("Next: %d\n", clientList->next->clientPort);
 		else
 			printf("Next: NULL\n");
 
@@ -224,15 +225,13 @@ void printList(ClientNode *clientList) {
 
 /* Ritorna in 'fileList' la lista dei file nella directory del server
    escluse le cartelle ed il file eseguibile del server */
-char* invokeFileList(char *serverFileName) {
+char** getFileNameList(char *serverFileName, int *numFiles) {
+
     char listFileCmd[64];
     FILE *fp;
     char filename[256];
-    char *fileList = malloc(1);
-    if(fileList == NULL){
-		printf("Error while trying to \"malloc\" a new fileList!\nClosing...\n");
-		exit(-1);
-	}
+
+    char **fileList = NULL;
 
     sprintf(listFileCmd, "ls -p | grep -v / | grep -v \"%s\"", serverFileName);
 
@@ -242,17 +241,24 @@ char* invokeFileList(char *serverFileName) {
 		exit(-1);
     }
 
-
     while (fgets(filename, 256, fp) != NULL){
-        fileList = realloc(fileList, strlen(fileList) + strlen(filename));
+    	(*numFiles)++;
+        fileList = realloc(fileList, sizeof(char*)*(*numFiles));
         if(fileList == NULL) {
         	printf("Error while trying to \"realloc\" the fileList string!\nClosing...\n");
 			exit(-1);
-        }
-        strcat(fileList, filename);
-    }
+		}
+        bzero(fileList + ((*numFiles)-1), sizeof(char*));
 
-    printf("\n\nLista dei files:\n%s\n",fileList);
+        fileList[(*numFiles)-1] = malloc(strlen(filename));
+        if(fileList[(*numFiles)-1] == NULL) {
+        	printf("Error while trying to \"malloc\" fileList[%d]!\nClosing...\n", (*numFiles)-1);
+			exit(-1);
+        }
+        bzero(fileList[(*numFiles)-1], strlen(filename));
+
+        strcpy(fileList[(*numFiles)-1], filename);
+    }
 
     if (pclose(fp) == -1) {
         printf("Error while trying to close the process for 'List file' command!\nClosing...\n");
@@ -264,36 +270,51 @@ char* invokeFileList(char *serverFileName) {
 
 /* Ritorna in 'fileList' la lista dei file nella directory del server
    escluse le cartelle ed il file eseguibile del server */
-int fileExist(char *serverFileName, char *clientFileName) {
+int fileExist(char **fileNameList, char *clientFileName, int numFiles) {
 
-    int find = 0;
+	char fileToSearch[strlen(clientFileName)+1];
+	strcpy(fileToSearch, clientFileName);
+	char *str1;
+	strcat(fileToSearch, "\n");
+	char *str2 = tolowerString(fileToSearch);
 
-    char listFileCmd[64];
-    FILE *fp;
-    char filename[256];
+	for(int i=0; i < numFiles; i++) {
+		str1 = tolowerString(fileNameList[i]);
+		if(strcmp(str1, str2) == 0) {
+    		return 1;
+		}
+		bzero(str1, strlen(str1));
+		free(str1);
+	}
 
-    sprintf(listFileCmd, "ls -p | grep -v / | grep -v \"%s\"", serverFileName);
+	free(str2);
+    return 0;
+}
 
-    fp = popen(listFileCmd, "r");
-    if (fp == NULL){
-        printf("Error while trying to run the 'List file' command!\nClosing...\n");
+/* Restituisce un lista dei file in formato stringa per il client */
+char* fileNameListToString(char **fileNameList, int numFiles) {
+
+	char *fileList = malloc(1);
+	if(fileList == NULL) {
+		printf("Error while trying to \"malloc\" a new fileList!\nClosing...\n");
 		exit(-1);
-    }
+	}
+	bzero(fileList, 1);
 
-    while (fgets(filename, 256, fp) != NULL){
-    	strtok(filename, "\n");
-    	if(strcmp(filename, clientFileName) == 0) {
-    		find = 1;
-    		break;
-    	}
-    }
+	int size;
+	for(int i=0; i < numFiles; i++) {
+		size = strlen(fileList);
+		fileList = realloc(fileList, size + strlen(fileNameList[i]));
+        if(fileList == NULL) {
+        	printf("Error while trying to \"realloc\" the fileList string!\nClosing...\n");
+			exit(-1);
+        }
+        bzero(fileList + size, strlen(fileNameList[i]));
 
-    if (pclose(fp) == -1) {
-        printf("Error while trying to close the process for 'List file' command!\nClosing...\n");
-		exit(-1);
-    }
+        strcat(fileList, fileNameList[i]);
+	}
 
-    return find;
+    return fileList;
 }
 
 #endif

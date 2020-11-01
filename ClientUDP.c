@@ -68,7 +68,7 @@ int main(int argc, char *argv[])
     }
     
     /* Creazione segmenti di invio/ricezione */
-  	Segment *sndSegment = mallocSegment("1", EMPTY, TRUE, FALSE, FALSE, EMPTY, EMPTY);
+  	Segment *sndSegment = mallocSegment("1", EMPTY, TRUE, FALSE, FALSE, EMPTY, EMPTY, -1);
 
 	Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
 	if(rcvSegment == NULL)
@@ -90,7 +90,7 @@ int main(int argc, char *argv[])
     /* Invio ACK del SYN-ACK */
     char ackNum[MAX_SEQ_ACK_NUM];
     sprintf(ackNum, "%d", atoi(rcvSegment -> seqNum) + 1);
-	newSegment(sndSegment, "2", ackNum, FALSE, TRUE, FALSE, EMPTY, EMPTY);
+	newSegment(sndSegment, "2", ackNum, FALSE, TRUE, FALSE, EMPTY, EMPTY, -1);
 	sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
 	wprintf(L"\nACK sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
 	wprintf(L"\nHandshake terminated!\n");
@@ -102,7 +102,7 @@ int main(int argc, char *argv[])
 
         switch(choice) {
             case 1:
-                newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "1", EMPTY);
+                newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "1", EMPTY, -1);
                 sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket);
                 lastSeqNumSend = 1;
                 
@@ -113,13 +113,22 @@ int main(int argc, char *argv[])
                 break;
 
             case 2:
-                newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "2", EMPTY);
+                newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "2", EMPTY, -1);
                 wprintf(L"Filename: ");
                 scanf("%s", sndSegment -> msg);
                 sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket);
                 
                 recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket);
-                wprintf(L"File: %s", rcvSegment -> msg);
+                //wprintf(L"File: %s", rcvSegment -> msg);
+
+                FILE *wrFile = fopen(sndSegment -> msg, "wb");
+
+                // STRUTTURA SEGMENT->MSG: "LUNGHEZZA_FILE|FILE_STESSO"
+                // es: "1072|cuore.png_in_byte"
+                for(int i = 0; i < 1072; i++) {
+                    fputc((rcvSegment -> msg)[i], wrFile);
+                }
+                fclose(wrFile);
 
                 break;
 

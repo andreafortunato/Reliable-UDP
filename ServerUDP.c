@@ -29,7 +29,8 @@ pthread_rwlock_t lockList;                  /* Semaforo Read/Write necessario pe
 int syncFlag = 0;
 int debug = 0;                              /* Se l'utente ha avviato in modalità debug, verranno mostrate informazioni aggiuntive */
 
-char serverFileName[256];
+char **fileNameList;
+int numFiles = 0;
 
 ClientNode *clientList = NULL;
 int clientListSize = 0;
@@ -44,7 +45,7 @@ int main(int argc, char *argv[])
     system("clear");
 
     /* Gestione del SIGINT (Ctrl+C) */
-    //signal(SIGINT, ctrl_c_handler);
+    signal(SIGINT, ctrl_c_handler);
 
     /* Inizializzazione semaforo R/W */
     if(pthread_rwlock_init(&lockList, NULL) != 0) {
@@ -58,38 +59,9 @@ int main(int argc, char *argv[])
     {
         exit(0);
     }
-
-    strcpy(serverFileName, argv[0]+2);
-
-    /* Scrive in 'filesList' la lista dei file nella directory eccetto il file eseguibile del server */
-    /*
-    char listFileCmd[500];
-    FILE *fp;
-    int status;
-    char path[512];
-    char filesList[4000] = "\0";
-
-    sprintf(listFileCmd, "ls -p | grep -v / | grep -v \"%s\"", argv[0]+2);
-
-    fp = popen(listFileCmd, "r");
-    if (fp == NULL){
-        printf("PICCO\n");
-        exit(-1);
-    }
-
-
-    while (fgets(path, 512, fp) != NULL)
-        strcat(filesList, path);
-
-    printf("\n\nLista dei files:\n%s",filesList);
-
-    status = pclose(fp);
-    if (status == -1) {
-        printf("PICCO2\n");
-        exit(-1);
-    }
-    */
     
+    fileNameList = getFileNameList(argv[0]+2, &numFiles);
+
     /* Dichiarazione variabili locali Main */
     int mainSockFd;     /*  */
     int ret;            /*  */
@@ -116,12 +88,20 @@ int main(int argc, char *argv[])
     Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
 	if(rcvSegment == NULL)
 	{
-		printf("Error while trying to \"malloc\" a new Segment!\nClosing...\n");
+		printf("Error while trying to \"malloc\" a new rcvSegment!\nClosing...\n");
 		exit(-1);
 	} 
 
-	/*  */
-    ThreadArgs *threadArgs = (ThreadArgs *)malloc(sizeof(ThreadArgs));
+    /* Struct Segment di ricezione */
+    Segment *sndSegment = (Segment*)malloc(sizeof(Segment));
+    if(sndSegment == NULL)
+    {
+        printf("Error while trying to \"malloc\" a new sndSegment!\nClosing...\n");
+        exit(-1);
+    } 
+
+	/* Struttura threadArgs per parametri del thread */
+    ThreadArgs *threadArgs = (ThreadArgs*)malloc(sizeof(ThreadArgs));
 	if(threadArgs == NULL)
 	{
 		printf("Error while trying to \"malloc\" a new ThreadArgs!\nClosing...\n");
@@ -182,11 +162,9 @@ int main(int argc, char *argv[])
 
     			/* list */
     			case 1:
-                    files = invokeFileList(argv[0] + 2);
-                    printf("FILES:\n%s", files);
-
-                    Segment *sendFileList = mallocSegment("1", EMPTY, FALSE, FALSE, FALSE, "1", files);
-                    sendto(mainSockFd, sendFileList, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
+                    newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "1", fileNameListToString(fileNameList, numFiles), -1);
+                    sendto(mainSockFd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
+                    syncFlag = 1; // TOGLIERE DA QUI E METTERLO NEL THREAD LIST FILE
     				break;
 
     			/* download */
@@ -246,27 +224,31 @@ int main(int argc, char *argv[])
 
 void ctrl_c_handler()
 {
+    printf("\n\n---> STAMPA LISTA FILE <---\n\n");
+    printf("Number of files: %d\n", numFiles);
+    printf("%s", fileNameListToString(fileNameList, numFiles));
+    
     printf("\n\n---> STAMPA LISTA <---\n\n");
     printf("|Size: %d - Max: %d|\n", clientListSize, maxSockFd);
     printList(clientList);
 
-    int sock;
-    printf("Socket da eliminare: ");
-    scanf("%d", &sock);
+    // int sock;
+    // printf("\nSocket da eliminare: ");
+    // scanf("%d", &sock);
 
-    ClientNode *tmp = clientList;
+    // ClientNode *tmp = clientList;
 
-    while(tmp != NULL)
-    {
-        if(tmp -> sockfd == sock)
-            deleteClientNode(&clientList, tmp, &clientListSize, &maxSockFd);
+    // while(tmp != NULL)
+    // {
+    //     if(tmp -> sockfd == sock)
+    //         deleteClientNode(&clientList, tmp, &clientListSize, &maxSockFd);
 
-        tmp = tmp -> next;
-    }
+    //     tmp = tmp -> next;
+    // }
 
-    printf("\n\n---> STAMPA LISTA <---\n\n");
-    printf("|Size: %d - Max: %d|\n", clientListSize, maxSockFd);
-    printList(clientList);
+    // printf("\n\n---> STAMPA LISTA <---\n\n");
+    // printf("|Size: %d - Max: %d|\n", clientListSize, maxSockFd);
+    // printList(clientList);
 }
 
 /* Thread associato al client */
@@ -308,6 +290,21 @@ void *client_thread_handshake(void *args)
 
     pthread_rwlock_wrlock(&lockList);
     addClientNode(&clientList, newClient, &clientListSize, &maxSockFd);
+    
+    printf("New Client\n");
+        if(newClient->prev)
+            printf("Prev: %d\n", newClient->prev->clientPort);
+        else
+            printf("Prev: NULL\n");
+
+        printf("Sockfd: %d\nIP: %s\nPort: %d\n", newClient->sockfd, newClient->ip, newClient->clientPort);
+        
+        if(newClient->next)
+            printf("Next: %d\n", newClient->next->clientPort);
+        else
+            printf("Next: NULL\n");
+
+
     pthread_rwlock_unlock(&lockList);
     syncFlag = 1;
 
@@ -317,7 +314,7 @@ void *client_thread_handshake(void *args)
     char ackNum[MAX_SEQ_ACK_NUM];
     sprintf(ackNum, "%d", atoi((threadArgs -> segment).seqNum) + 1);
 
-    Segment *synAck = mallocSegment("1", ackNum, TRUE, TRUE, FALSE, EMPTY, EMPTY);
+    Segment *synAck = mallocSegment("1", ackNum, TRUE, TRUE, FALSE, EMPTY, EMPTY, -1);
 
     /* Invio SYN-ACK */
     if((ret = sendto(clientSockFd, synAck, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient)) != sizeof(Segment)) {
@@ -326,7 +323,9 @@ void *client_thread_handshake(void *args)
     }
     else
 	   printf("SYN-ACK sent to the client (%s:%d)\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+
 	newClient -> lastSeqServer = 1;
+    free(synAck);
 
     /* ACK del SYN-ACK */
     Segment *rcvSegment = (Segment*) malloc(sizeof(Segment));
@@ -344,6 +343,8 @@ void *client_thread_handshake(void *args)
     newClient -> lastSeqClient = atoi(rcvSegment -> seqNum);
 
     printf("\nHandshake terminated with client (%s:%d)\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+
+    free(rcvSegment);
 
     close(clientSockFd);
     pthread_exit(NULL);
@@ -402,14 +403,16 @@ void *client_thread_download(void *args)
         serverSocket.sin_port = htons(1024 + rand() % (65535+1 - 1024));
     } while(bind(clientSockFd, (struct sockaddr*)&serverSocket, addrlenServer) != 0);
 
-
     /* Se il file è presente nel server */
-    if(fileExist(serverFileName, rcvSegment.msg)) {
+    if(fileExist(fileNameList, rcvSegment.msg, numFiles)) {
 
         // Aprire il file da inviare e scriverlo dentro sndSegment...
         FILE *file = fopen(rcvSegment.msg, "rb");
         char buffFile[4081];
         char rowBuff[4081];
+
+        // STRUTTURA SEGMENT->MSG: "LUNGHEZZA_FILE|FILE_STESSO"
+        // es: "1072|cuore.png_in_byte"
 
         char newLine[2];
         int len, i=1;
@@ -419,7 +422,7 @@ void *client_thread_download(void *args)
 
                                 /* Codice per leggere e scrivere un nuovo file */
 
-        FILE *wrFile = fopen("cuore1.png", "wb");
+        FILE *wrFile = fopen("cuore1.txt", "wb");
 
         fseek(file, 0, SEEK_END);
         int fileLen = ftell(file);
@@ -441,14 +444,13 @@ void *client_thread_download(void *args)
         // ACK+DATI della richiesta di download da parte del client 
         char ackNum[MAX_SEQ_ACK_NUM];
         sprintf(ackNum, "%d", atoi(rcvSegment.seqNum) + 1);
-        Segment *sndSegment = mallocSegment("1", ackNum, FALSE, TRUE, FALSE, "2", buffFile);
-        printf("\nFILE: \n->%s<-\nLunghezza: %d\n", buffFile, strlen(buffFile));
-        //sendto(clientSockFd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
+        Segment *sndSegment = mallocSegment("1", ackNum, FALSE, TRUE, FALSE, "2", buffFile, fileLen);
+        sendto(clientSockFd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
+        free(sndSegment);
     }
     else {
         printf("\nFile not found!\n");
     }
-
 
     close(clientSockFd);
     pthread_exit(NULL);
