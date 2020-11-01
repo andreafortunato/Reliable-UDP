@@ -6,10 +6,14 @@
 // Provare 2**16 pow(2,16) per elevare 2 alla 16
 #define MAX_SEQ_ACK_NUM 11
 #define BIT 2
+#define CMD 2
+#define WIN 3
+#define MSG 4056
+#define LEN_MSG 5
 
 /**/
 #define TRUE "1"
-#define FALSE "0"
+#define FALSE "2"
 #define EMPTY " "
 
 typedef struct sockaddr_in Sockaddr_in;
@@ -25,19 +29,22 @@ typedef struct _Segment
 	char ackBit[BIT];
 	char finBit[BIT];
 
-	char winSize[3];
+	char winSize[WIN];				/*  */
 
-	char cmdType[2];				/* Operazione richiesta */
-	char msg[4081];
+	char cmdType[CMD];				/* Operazione richiesta */
+	char lenMsg[LEN_MSG];					/* Lunghezza campo msg */
+	char msg[MSG];					/* Contenuto del messaggio */
 } Segment;
 
 
 /* ***************************************************************************************** */
 
 /* Inizializzazione di un nuovo client */
-void newSegment(Segment *segment, char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, char *msg, int lenFile) {
+void newSegment(Segment *segment, char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, char *msg) {
 
 	int i;
+	char tmpBuff[LEN_MSG];
+	sprintf(tmpBuff, "%d", lenMsg);
 
 	bzero(segment, sizeof(Segment));
 
@@ -53,24 +60,18 @@ void newSegment(Segment *segment, char *seqNum, char *ackNum, char *synBit, char
 	strcpy(segment -> winSize, "5");
 	
 	strcpy(segment -> cmdType, cmdType);
-	
-	if(lenFile == -1) {
-		strcpy(segment -> msg, msg);
-		return;
-	}
+	strcpy(segment -> lenMsg, tmpBuff);
 
-	for(i = 0; i < lenFile; i++) 
+	for(i = 0; i < lenMsg; i++) 
 		(segment -> msg)[i] = msg[i];
-
-	printf("\n%d\n", i);
 }
 
 /* Inizializzazione di un nuovo client */
-Segment* mallocSegment(char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, char *msg, int lenFile) {
+Segment* mallocSegment(char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, char *msg) {
 	Segment *segment = (Segment*) malloc(sizeof(Segment));
 	if(segment != NULL)
 	{
-		newSegment(segment, seqNum, ackNum, synBit, ackBit, finBit, cmdType, msg, lenFile);
+		newSegment(segment, seqNum, ackNum, synBit, ackBit, finBit, cmdType, lenMsg, msg);
 	} else {
 		printf("Error while trying to \"malloc\" a new Segment!\nClosing...\n");
 		exit(-1);

@@ -43,17 +43,19 @@ int main(int argc, char *argv[])
     }
 
     /* Parse dei parametri passati da riga di comando */
-    int port = parseCmdLine(argc, argv, "client", &ip, &debug); 
-    if(port == -1)
-    {
-        exit(0);
-    }    
+    // int port = parseCmdLine(argc, argv, "client", &ip, &debug); 
+    // if(port == -1)
+    // {
+    //     exit(0);
+    // }    
 
     /* Sockaddr_in server, utilizzata per l'handshake e le richieste di operazioni */
     Sockaddr_in mainServerSocket; 
     mainServerSocket.sin_family = AF_INET;
-    mainServerSocket.sin_addr.s_addr = inet_addr(ip);
-    mainServerSocket.sin_port = htons(port); 
+    //mainServerSocket.sin_addr.s_addr = inet_addr(ip);
+    //mainServerSocket.sin_port = htons(port); 
+    mainServerSocket.sin_addr.s_addr = inet_addr("127.0.0.1");
+    mainServerSocket.sin_port = htons(47435); 
     int addrlenMainServerSocket = sizeof(mainServerSocket);
 
     /* Sockaddr_in server, utilizzata per l'esecuzione delle operazioni */
@@ -68,7 +70,7 @@ int main(int argc, char *argv[])
     }
     
     /* Creazione segmenti di invio/ricezione */
-  	Segment *sndSegment = mallocSegment("1", EMPTY, TRUE, FALSE, FALSE, EMPTY, EMPTY, -1);
+  	Segment *sndSegment = mallocSegment("1", EMPTY, TRUE, FALSE, FALSE, EMPTY, 1, EMPTY);
 
 	Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
 	if(rcvSegment == NULL)
@@ -90,7 +92,7 @@ int main(int argc, char *argv[])
     /* Invio ACK del SYN-ACK */
     char ackNum[MAX_SEQ_ACK_NUM];
     sprintf(ackNum, "%d", atoi(rcvSegment -> seqNum) + 1);
-	newSegment(sndSegment, "2", ackNum, FALSE, TRUE, FALSE, EMPTY, EMPTY, -1);
+	newSegment(sndSegment, "2", ackNum, FALSE, TRUE, FALSE, EMPTY, 1, EMPTY);
 	sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
 	wprintf(L"\nACK sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
 	wprintf(L"\nHandshake terminated!\n");
@@ -102,7 +104,7 @@ int main(int argc, char *argv[])
 
         switch(choice) {
             case 1:
-                newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "1", EMPTY, -1);
+                newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "1", 1, EMPTY);
                 sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket);
                 lastSeqNumSend = 1;
                 
@@ -113,7 +115,7 @@ int main(int argc, char *argv[])
                 break;
 
             case 2:
-                newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "2", EMPTY, -1);
+                newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "2", 1, EMPTY);
                 wprintf(L"Filename: ");
                 scanf("%s", sndSegment -> msg);
                 sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket);
@@ -125,7 +127,7 @@ int main(int argc, char *argv[])
 
                 // STRUTTURA SEGMENT->MSG: "LUNGHEZZA_FILE|FILE_STESSO"
                 // es: "1072|cuore.png_in_byte"
-                for(int i = 0; i < 1072; i++) {
+                for(int i = 0; i < atoi(rcvSegment -> lenMsg); i++) {
                     fputc((rcvSegment -> msg)[i], wrFile);
                 }
                 fclose(wrFile);

@@ -44,6 +44,8 @@ int main(int argc, char *argv[])
     srand(time(0));
     system("clear");
 
+    //int c = ((a-1)/b) + 1; // FORMULA DELLA VITA
+
     /* Gestione del SIGINT (Ctrl+C) */
     signal(SIGINT, ctrl_c_handler);
 
@@ -54,11 +56,11 @@ int main(int argc, char *argv[])
     }
     
     /* Parse dei parametri passati da riga di comando */
-    int port = parseCmdLine(argc, argv, "server", NULL, &debug);
-    if(port == -1)
-    {
-        exit(0);
-    }
+    // int port = parseCmdLine(argc, argv, "server", NULL, &debug);
+    // if(port == -1)
+    // {
+    //     exit(0);
+    // }
     
     fileNameList = getFileNameList(argv[0]+2, &numFiles);
 
@@ -66,6 +68,7 @@ int main(int argc, char *argv[])
     int mainSockFd;     /*  */
     int ret;            /*  */
     int exist = 0;      /*  */
+    char *tmpBuff;
 
     pthread_t tid;      /*  */
 
@@ -76,7 +79,8 @@ int main(int argc, char *argv[])
     bzero(&serverSocket, sizeof(Sockaddr_in));
     serverSocket.sin_family = AF_INET;
     serverSocket.sin_addr.s_addr = htonl(INADDR_ANY);
-    serverSocket.sin_port = htons(port);
+    //serverSocket.sin_port = htons(port);
+    serverSocket.sin_port = htons(47435);
     int addrlenServer = sizeof(serverSocket);
 
     /* Sockaddr_in client */
@@ -162,8 +166,16 @@ int main(int argc, char *argv[])
 
     			/* list */
     			case 1:
-                    newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "1", fileNameListToString(fileNameList, numFiles), -1);
+                    printf("1\n");
+                    tmpBuff = fileNameListToString(fileNameList, numFiles);
+                    printf("2\n");
+
+                    newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "1", strlen(tmpBuff), tmpBuff);
+                    printf("3\n");
                     sendto(mainSockFd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
+                    printf("4\n");
+                    bzero(tmpBuff, strlen(tmpBuff));
+                    free(tmpBuff);
                     syncFlag = 1; // TOGLIERE DA QUI E METTERLO NEL THREAD LIST FILE
     				break;
 
@@ -314,7 +326,7 @@ void *client_thread_handshake(void *args)
     char ackNum[MAX_SEQ_ACK_NUM];
     sprintf(ackNum, "%d", atoi((threadArgs -> segment).seqNum) + 1);
 
-    Segment *synAck = mallocSegment("1", ackNum, TRUE, TRUE, FALSE, EMPTY, EMPTY, -1);
+    Segment *synAck = mallocSegment("1", ackNum, TRUE, TRUE, FALSE, EMPTY, 1, EMPTY);
 
     /* Invio SYN-ACK */
     if((ret = sendto(clientSockFd, synAck, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient)) != sizeof(Segment)) {
@@ -444,7 +456,7 @@ void *client_thread_download(void *args)
         // ACK+DATI della richiesta di download da parte del client 
         char ackNum[MAX_SEQ_ACK_NUM];
         sprintf(ackNum, "%d", atoi(rcvSegment.seqNum) + 1);
-        Segment *sndSegment = mallocSegment("1", ackNum, FALSE, TRUE, FALSE, "2", buffFile, fileLen);
+        Segment *sndSegment = mallocSegment("1", ackNum, FALSE, TRUE, FALSE, "2", fileLen, buffFile);
         sendto(clientSockFd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
         free(sndSegment);
     }

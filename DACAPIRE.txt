@@ -1,0 +1,35 @@
+s.msg:	50 byte
+file:	120 byte
+	=====>> necessarie 3 send
+
+
+	SERVER			CLIENT
+
+seq: 1
+msg: 1->50
+
+				seq: 1
+				ack: 51
+
+seq: 51
+msg: 51->100
+
+				seq: 2
+				ack: 101
+
+eot: 1
+seq: 101
+msg: 101->120
+
+				seq: 3
+				ack: 121
+				PERDE
+
+eot: 1
+seq: 101
+msg: 101->120
+
+				seq: 3
+				ack: 121
+
+			FINE

@@ -17,6 +17,9 @@ typedef struct _ClientNode {
 	unsigned int lastSeqClient;				/* Ultimo numero di sequenza ricevuto dal Client */
 	unsigned int lastSeqServer;				/* Ultimo numero di sequenza inviato al Client */
 
+	Segment window[WIN_SIZE];
+	int ack;
+
 	struct _ClientNode *next;				/* Puntatore a ClientNode successivo */
 	struct _ClientNode *prev;   			/* Puntatore a ClientNode precedente */
 } ClientNode;
