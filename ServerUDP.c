@@ -13,6 +13,7 @@
 #include <time.h>
 #include <signal.h>
 #include <ctype.h>
+#include <errno.h>
 #include "Server.h"
 
 #define IP_PROTOCOL 0
@@ -44,6 +45,8 @@ int main(int argc, char *argv[])
     srand(time(0));
     system("clear");
 
+    printf("%d\n", ntohl(65));
+
     //int c = ((a-1)/b) + 1; // FORMULA DELLA VITA
 
     /* Gestione del SIGINT (Ctrl+C) */
@@ -63,6 +66,7 @@ int main(int argc, char *argv[])
     // }
     
     fileNameList = getFileNameList(argv[0]+2, &numFiles);
+    printf("%d\n", numFiles);
 
     /* Dichiarazione variabili locali Main */
     int mainSockFd;     /*  */
@@ -128,6 +132,14 @@ int main(int argc, char *argv[])
         printf("\nBinding Failed!\n");
         exit(-1);
     }
+
+    /* Configurazione dimensione buffer di ricezione */
+    int sockBufLen = SOCKBUFLEN;
+    if (setsockopt(mainSockFd, SOL_SOCKET, SO_RCVBUF, &sockBufLen, sizeof(int)) == -1) {
+        printf("Error while setting SO_RCVBUF for socket %d: %s\n", mainSockFd, strerror(errno));
+        exit(-1);
+    }
+
 	char *files;
     /* Server in attesa di richieste da parte dei client */
     while(1) {
@@ -166,14 +178,9 @@ int main(int argc, char *argv[])
 
     			/* list */
     			case 1:
-                    printf("1\n");
                     tmpBuff = fileNameListToString(fileNameList, numFiles);
-                    printf("2\n");
-
-                    newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "1", strlen(tmpBuff), tmpBuff);
-                    printf("3\n");
+                    newSegment(sndSegment, 1, -1, FALSE, FALSE, FALSE, "1", strlen(tmpBuff), tmpBuff);
                     sendto(mainSockFd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
-                    printf("4\n");
                     bzero(tmpBuff, strlen(tmpBuff));
                     free(tmpBuff);
                     syncFlag = 1; // TOGLIERE DA QUI E METTERLO NEL THREAD LIST FILE
@@ -218,7 +225,7 @@ int main(int argc, char *argv[])
             {
                 printf("New client thread error\n");
                 exit(-1);
-            }            
+            }
         }
 
         /* Attesa dell'aggiunta del nuovo client */
@@ -295,7 +302,7 @@ void *client_thread_handshake(void *args)
     }
 
     do {
-        serverSocket.sin_port = htons(1024 + rand() % (65535+1 - 1024));
+        serverSocket.sin_port = htons(49152 + rand() % (65535+1 - 49152));
     } while(bind(clientSockFd, (struct sockaddr*)&serverSocket, addrlenServer) != 0);
     
     ClientNode *newClient = newNode(clientSockFd, inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port), pthread_self(), ntohs(serverSocket.sin_port), (threadArgs -> segment).seqNum); 
@@ -323,10 +330,9 @@ void *client_thread_handshake(void *args)
     printf("\n\nThread created for (%s:%d), bind on %d\n", newClient -> ip, newClient -> clientPort, newClient -> serverPort);
 
     /* SYN-ACK */
-    char ackNum[MAX_SEQ_ACK_NUM];
-    sprintf(ackNum, "%d", atoi((threadArgs -> segment).seqNum) + 1);
+    int ackNum = atoi((threadArgs -> segment).seqNum) + 1;
 
-    Segment *synAck = mallocSegment("1", ackNum, TRUE, TRUE, FALSE, EMPTY, 1, EMPTY);
+    Segment *synAck = mallocSegment(1, ackNum, TRUE, TRUE, FALSE, EMPTY, 1, EMPTY);
 
     /* Invio SYN-ACK */
     if((ret = sendto(clientSockFd, synAck, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient)) != sizeof(Segment)) {
@@ -391,6 +397,12 @@ void *client_thread_download(void *args)
     Segment rcvSegment = threadArgs -> segment;
     printf("Thread for download for (%s:%d)\n", client -> ip, client -> clientPort);
 
+    Segment *sndSegment = (Segment*) malloc(sizeof(Segment));
+    if(sndSegment == NULL) {
+        printf("Error while trying to \"malloc\" a new sndSegment of (%s:%d)!\nClosing...\n", client -> ip, client -> clientPort);
+        exit(-1);
+    }
+
     /* Sockaddr_in client */
     Sockaddr_in clientSocket;
     clientSocket = threadArgs -> clientSocket;
@@ -407,12 +419,12 @@ void *client_thread_download(void *args)
     /* Socket UDP */
     clientSockFd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL);
     if (clientSockFd < 0){
-        printf("\nFailed creating socket for client download (%s:%d)!\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+        printf("\nFailed creating socket for client download (%s:%d)!\n", client -> ip, client -> clientPort);
         exit(-1);
     }
 
     do {
-        serverSocket.sin_port = htons(1024 + rand() % (65535+1 - 1024));
+        serverSocket.sin_port = htons(49152 + rand() % (65535+1 - 49152));
     } while(bind(clientSockFd, (struct sockaddr*)&serverSocket, addrlenServer) != 0);
 
     /* Se il file è presente nel server */
@@ -420,45 +432,41 @@ void *client_thread_download(void *args)
 
         // Aprire il file da inviare e scriverlo dentro sndSegment...
         FILE *file = fopen(rcvSegment.msg, "rb");
-        char buffFile[4081];
-        char rowBuff[4081];
-
-        // STRUTTURA SEGMENT->MSG: "LUNGHEZZA_FILE|FILE_STESSO"
-        // es: "1072|cuore.png_in_byte"
-
-        char newLine[2];
-        int len, i=1;
-        int byteReades;
-
-        /*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
-
-                                /* Codice per leggere e scrivere un nuovo file */
-
-        FILE *wrFile = fopen("cuore1.txt", "wb");
 
         fseek(file, 0, SEEK_END);
         int fileLen = ftell(file);
         fseek(file, 0, SEEK_SET);
 
-        for(i=0; i<fileLen; i++) {
-            buffFile[i] = fgetc(file);
-        }
+        int totalSegs = (fileLen-1)/(LEN_MSG) + 1; /* Formula della vita: (A-1)/B+1, parte intera superiore della divisione A/B */
+        
+        // /* Idea di base */
+        // for(int i = 0; i < totalSegs; i++) {
+        //     while(client -> winPos>4);
+        //     send;
+        // }
+        char buffFile[LEN_MSG];
+        int ch;
+        int i, j;
+        int currentPos;
 
-        for(i=0; i<fileLen; i++) {
-            fputc(buffFile[i],wrFile);
+        for(i = 0, currentPos = 1; i < totalSegs; i++) {
+            //while((client -> winPos) > 4);
+            bzero(buffFile, LEN_MSG);
+            for(j = 0; j < LEN_MSG; j++, currentPos++) {
+                if((ch = fgetc(file)) == EOF)
+                    break;
+                buffFile[j] = ch;
+            }
+
+            currentPos--;
+            printf("Invio pacchetto n°%d - (i: %d) - (currentPos: %d) - (j: %d)\n", i+1, i, currentPos, j);
+            newSegment(sndSegment, currentPos-j+1, -1, FALSE, FALSE, FALSE, "2", j, buffFile);
+            sendto(clientSockFd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
         }
-        //fprintf(wrFile, "%s", buffFile);
+        printf("Fine invio pacchetti\n");
+
+
         fclose(file);
-        fclose(wrFile);
-
-        /*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
-
-        // ACK+DATI della richiesta di download da parte del client 
-        char ackNum[MAX_SEQ_ACK_NUM];
-        sprintf(ackNum, "%d", atoi(rcvSegment.seqNum) + 1);
-        Segment *sndSegment = mallocSegment("1", ackNum, FALSE, TRUE, FALSE, "2", fileLen, buffFile);
-        sendto(clientSockFd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
-        free(sndSegment);
     }
     else {
         printf("\nFile not found!\n");
@@ -476,3 +484,98 @@ void *client_thread_upload(void *args)
     //close(clientSockFd);
     pthread_exit(NULL);
 }
+
+
+
+/* *************************************************************************************************************************** */
+
+// /* Thread associato al client */
+// void *client_thread_download(void *args)
+// {    
+//     int clientSockFd;
+//     int ret;
+
+//     ThreadArgs *threadArgs = (ThreadArgs*)args;
+
+//     ClientNode *client = threadArgs -> client;
+//     Segment rcvSegment = threadArgs -> segment;
+//     printf("Thread for download for (%s:%d)\n", client -> ip, client -> clientPort);
+
+//     /* Sockaddr_in client */
+//     Sockaddr_in clientSocket;
+//     clientSocket = threadArgs -> clientSocket;
+//     int addrlenClient = sizeof(clientSocket);
+
+//     syncFlag = 1;
+
+//     /* Sockaddr_in server */
+//     Sockaddr_in serverSocket;
+//     serverSocket.sin_family = AF_INET;
+//     serverSocket.sin_addr.s_addr = inet_addr(inet_ntoa(clientSocket.sin_addr));
+//     int addrlenServer = sizeof(serverSocket);
+
+//     /* Socket UDP */
+//     clientSockFd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL);
+//     if (clientSockFd < 0){
+//         printf("\nFailed creating socket for client download (%s:%d)!\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+//         exit(-1);
+//     }
+
+//     do {
+//         serverSocket.sin_port = htons(49152 + rand() % (65535+1 - 49152));
+//     } while(bind(clientSockFd, (struct sockaddr*)&serverSocket, addrlenServer) != 0);
+
+//     /* Se il file è presente nel server */
+//     if(fileExist(fileNameList, rcvSegment.msg, numFiles)) {
+
+//         // Aprire il file da inviare e scriverlo dentro sndSegment...
+//         FILE *file = fopen(rcvSegment.msg, "rb");
+//         char buffFile[4081];
+//         char rowBuff[4081];
+
+//         // STRUTTURA SEGMENT->MSG: "LUNGHEZZA_FILE|FILE_STESSO"
+//         // es: "1072|cuore.png_in_byte"
+
+//         char newLine[2];
+//         int len, i=1;
+//         int byteReades;
+
+//         /*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
+
+//                                 /* Codice per leggere e scrivere un nuovo file */
+
+//         FILE *wrFile = fopen("cuore1.txt", "wb");
+
+//         fseek(file, 0, SEEK_END);
+//         int fileLen = ftell(file);
+//         fseek(file, 0, SEEK_SET);
+
+//         for(i=0; i<fileLen; i++) {
+//             buffFile[i] = fgetc(file);
+//         }
+
+//         for(i=0; i<fileLen; i++) {
+//             fputc(buffFile[i],wrFile);
+//         }
+//         //fprintf(wrFile, "%s", buffFile);
+//         fclose(file);
+//         fclose(wrFile);
+
+//         /*+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
+
+//         // ACK+DATI della richiesta di download da parte del client 
+//         char ackNum[MAX_SEQ_ACK_NUM];
+//         sprintf(ackNum, "%d", atoi(rcvSegment.seqNum) + 1);
+//         Segment *sndSegment = mallocSegment("1", ackNum, FALSE, TRUE, FALSE, "2", fileLen, buffFile);
+//         sendto(clientSockFd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
+//         free(sndSegment);
+//     }
+//     else {
+//         printf("\nFile not found!\n");
+//     }
+
+//     close(clientSockFd);
+//     pthread_exit(NULL);
+// }
+
+/* *************************************************************************************************************************** */

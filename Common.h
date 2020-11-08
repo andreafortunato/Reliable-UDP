@@ -1,15 +1,18 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+#define SOCKBUFLEN 64844	/* (1500+8)*43 = (MSS+HEADER_UDP)*MAX_WIN_SIZE */
+
 /* Dimensione campo Seq/Ack 11 perchè il massimo valore rappresentabile
-   in TCP è (2^16)-1 = 4294967295, quindi 11 caratteri */
+   in TCP è (2^16)-1 = 4294967295, quindi 10 caratteri + '\0'*/
 // Provare 2**16 pow(2,16) per elevare 2 alla 16
 #define MAX_SEQ_ACK_NUM 11
 #define BIT 2
 #define CMD 2
-#define WIN 3
-#define MSG 4056
-#define LEN_MSG 5
+#define WIN 3				/* La massima finestra sarà "43" (65536/1500 = (MAX_WIN_SIZE in byte)/MSS), ovvero 2 caratteri + '\0' */
+#define BYTE_MSG 5
+// #define MSG 4056
+#define LEN_MSG 500			/* MSS-(lunghezza di tutti i campi) = 1460 byte rimanenti*/
 
 /**/
 #define TRUE "1"
@@ -32,26 +35,33 @@ typedef struct _Segment
 	char winSize[WIN];				/*  */
 
 	char cmdType[CMD];				/* Operazione richiesta */
-	char lenMsg[LEN_MSG];					/* Lunghezza campo msg */
-	char msg[MSG];					/* Contenuto del messaggio */
+	char lenMsg[BYTE_MSG];			/* Lunghezza, in byte, del campo msg */
+	char msg[LEN_MSG];				/* Contenuto del messaggio */
 } Segment;
 
 
 /* ***************************************************************************************** */
 
 /* Inizializzazione di un nuovo client */
-void newSegment(Segment *segment, char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, char *msg) {
+void newSegment(Segment *segment, int seqNum, int ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, char *msg) {
 
 	int i;
 	char tmpBuff[LEN_MSG];
-	sprintf(tmpBuff, "%d", lenMsg);
-
 	bzero(segment, sizeof(Segment));
 
 	strcpy(segment -> eotBit, "1");
 
-	strcpy(segment -> seqNum, seqNum);
-	strcpy(segment -> ackNum, ackNum);
+	sprintf(tmpBuff, "%d", seqNum);
+	strcpy(segment -> seqNum, tmpBuff);
+	bzero(tmpBuff, LEN_MSG);
+	if(ackNum != -1) {
+		sprintf(tmpBuff, "%d", ackNum);
+		strcpy(segment -> ackNum, tmpBuff);
+		bzero(tmpBuff, LEN_MSG);
+	} else {
+		strcpy(segment -> ackNum, EMPTY);
+	}
+	
 
 	strcpy(segment -> synBit, synBit);
 	strcpy(segment -> ackBit, ackBit);
@@ -60,6 +70,7 @@ void newSegment(Segment *segment, char *seqNum, char *ackNum, char *synBit, char
 	strcpy(segment -> winSize, "5");
 	
 	strcpy(segment -> cmdType, cmdType);
+	sprintf(tmpBuff, "%d", lenMsg);
 	strcpy(segment -> lenMsg, tmpBuff);
 
 	for(i = 0; i < lenMsg; i++) 
@@ -67,7 +78,7 @@ void newSegment(Segment *segment, char *seqNum, char *ackNum, char *synBit, char
 }
 
 /* Inizializzazione di un nuovo client */
-Segment* mallocSegment(char *seqNum, char *ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, char *msg) {
+Segment* mallocSegment(int seqNum, int ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, char *msg) {
 	Segment *segment = (Segment*) malloc(sizeof(Segment));
 	if(segment != NULL)
 	{
@@ -127,7 +138,7 @@ int parseCmdLine(int argc, char **argv, char *who, char **ip, int *debug)
 					printf("Syntax:\n\t %s -p PORT_NUMBER [-d, -debug]\n", argv[0]);
 					return -1;
 				}
-				else if(port < 1024 || port > 65535)
+				else if((port < 49152 || port > 65535) && port != 47435)
 				{
 					printf("PORT_NUMBER must be a number between 1024 and 65535\n");
 					return -1;
@@ -144,7 +155,7 @@ int parseCmdLine(int argc, char **argv, char *who, char **ip, int *debug)
 					printf("Syntax:\n\t %s -p PORT_NUMBER [-d, -debug]\n", argv[0]);
 					return -1;
 				}
-				else if(port < 1024 || port > 65535)
+				else if((port < 49152 || port > 65535) && port != 47435)
 				{
 					printf("PORT_NUMBER must be a number between 1024 and 65535\n");
 					return -1;
@@ -196,7 +207,7 @@ int parseCmdLine(int argc, char **argv, char *who, char **ip, int *debug)
 				else
 				{
 					port = atoi(argv[4]); 
-					if(port < 1024 || port > 65535)
+					if((port < 49152 || port > 65535) && port != 47435)
 					{
 						printf("PORT_NUMBER must be a number between 1024 and 65535!\n");
 						return -1;
@@ -248,7 +259,7 @@ int parseCmdLine(int argc, char **argv, char *who, char **ip, int *debug)
 				else
 				{
 					port = atoi(argv[4]); 
-					if(port < 1024 || port > 65535)
+					if((port < 49152 || port > 65535) && port != 47435)
 					{
 						printf("PORT_NUMBER must be a number between 1024 and 65535!\n");
 						return -1;
@@ -330,6 +341,10 @@ void recvSegment(int sockFd, Segment *segment, Sockaddr_in *socket, int *socketL
                 break;  
             }
         }
+}
+
+int sup(int dividend, int divisor) {
+	return ((dividend-1)/divisor)+1;
 }
 
 #endif

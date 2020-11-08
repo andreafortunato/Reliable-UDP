@@ -10,6 +10,7 @@
 #include <wchar.h>
 #include <locale.h>
 #include <ctype.h>
+#include <errno.h>
 #include "Client.h"
   
 #define IP_PROTOCOL 0       /* Protocollo UDP default */
@@ -68,9 +69,21 @@ int main(int argc, char *argv[])
     	wprintf(L"\nFile descriptor not received!\n");
     	exit(-1);
     }
+
+    /* Configurazione dimensione buffer di ricezione */
+    int sockBufLen = SOCKBUFLEN;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &sockBufLen, sizeof(int)) == -1) {
+        wprintf(L"Error while setting SO_RCVBUF for socket %d: %s\n", sockfd, strerror(errno));
+        exit(-1);
+    }
+    /* Configurazione dimensione buffer di invio */
+    if (setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &sockBufLen, sizeof(int)) == -1) {
+        wprintf(L"Error while setting SO_SNDBUF for socket %d: %s\n", sockfd, strerror(errno));
+        exit(-1);
+    }
     
     /* Creazione segmenti di invio/ricezione */
-  	Segment *sndSegment = mallocSegment("1", EMPTY, TRUE, FALSE, FALSE, EMPTY, 1, EMPTY);
+  	Segment *sndSegment = mallocSegment(1, -1, TRUE, FALSE, FALSE, EMPTY, 1, EMPTY);
 
 	Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
 	if(rcvSegment == NULL)
@@ -90,9 +103,8 @@ int main(int argc, char *argv[])
 	wprintf(L"\n[PKT_RECV]: Server information: (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
 	
     /* Invio ACK del SYN-ACK */
-    char ackNum[MAX_SEQ_ACK_NUM];
-    sprintf(ackNum, "%d", atoi(rcvSegment -> seqNum) + 1);
-	newSegment(sndSegment, "2", ackNum, FALSE, TRUE, FALSE, EMPTY, 1, EMPTY);
+    int ackNum = atoi(rcvSegment -> seqNum) + 1;
+	newSegment(sndSegment, 2, ackNum, FALSE, TRUE, FALSE, EMPTY, 1, EMPTY);
 	sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
 	wprintf(L"\nACK sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
 	wprintf(L"\nHandshake terminated!\n");
@@ -104,7 +116,7 @@ int main(int argc, char *argv[])
 
         switch(choice) {
             case 1:
-                newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "1", 1, EMPTY);
+                newSegment(sndSegment, 1, -1, FALSE, FALSE, FALSE, "1", 1, EMPTY);
                 sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket);
                 lastSeqNumSend = 1;
                 
@@ -115,20 +127,31 @@ int main(int argc, char *argv[])
                 break;
 
             case 2:
-                newSegment(sndSegment, "1", EMPTY, FALSE, FALSE, FALSE, "2", 1, EMPTY);
+                newSegment(sndSegment, 1, -1, FALSE, FALSE, FALSE, "2", 1, EMPTY);
                 wprintf(L"Filename: ");
                 scanf("%s", sndSegment -> msg);
                 sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket);
                 
-                recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket);
+                //recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket);
                 //wprintf(L"File: %s", rcvSegment -> msg);
 
                 FILE *wrFile = fopen(sndSegment -> msg, "wb");
 
                 // STRUTTURA SEGMENT->MSG: "LUNGHEZZA_FILE|FILE_STESSO"
                 // es: "1072|cuore.png_in_byte"
-                for(int i = 0; i < atoi(rcvSegment -> lenMsg); i++) {
-                    fputc((rcvSegment -> msg)[i], wrFile);
+                // for(int i = 0; i < atoi(rcvSegment -> lenMsg); i++) {
+                //     fputc((rcvSegment -> msg)[i], wrFile);
+                // }
+                // fclose(wrFile);
+
+                wprintf(L"AO STO A RICEVE\n");
+                for(int i=0; i<3; i++) {
+                    recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket);
+                    wprintf(L"Ricevuto pacchetto n°%d con lenMSG: %d\n", i+1, atoi(rcvSegment -> lenMsg));
+                    for(int j = 0; j < atoi(rcvSegment -> lenMsg); j++) {
+                        fputc((rcvSegment -> msg)[j], wrFile);
+                    }
+                    //sleep(3);
                 }
                 fclose(wrFile);
 

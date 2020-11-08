@@ -17,7 +17,9 @@ typedef struct _ClientNode {
 	unsigned int lastSeqClient;				/* Ultimo numero di sequenza ricevuto dal Client */
 	unsigned int lastSeqServer;				/* Ultimo numero di sequenza inviato al Client */
 
-	Segment window[WIN_SIZE];
+	Segment *sendWindow;
+	unsigned int winPos;
+
 	int ack;
 
 	struct _ClientNode *next;				/* Puntatore a ClientNode successivo */
@@ -68,6 +70,14 @@ ClientNode* newNode(unsigned int sockfd, char *ip, unsigned int clientPort, pthr
 
 		node -> lastSeqClient = atoi(lastSeqClient);
 		node -> lastSeqServer = 0;
+
+		// CAMBIARE '5' CON DIMENSIONE FINESTRA PASSATA COME PARAMETRO (?)
+		node -> sendWindow = (Segment *) malloc(sizeof(Segment) * 5);
+		if((node -> sendWindow) == NULL) {
+			printf("Error while trying to \"malloc\" a new sendWindow of node (%s:%u)!\nClosing...\n", ip, clientPort);
+			exit(-1);
+		}
+		node -> winPos = -1;
 
 		node -> next = NULL;
 		node -> prev = NULL;
@@ -307,15 +317,14 @@ char* fileNameListToString(char **fileNameList, int numFiles) {
 	int size;
 	for(int i=0; i < numFiles; i++) {
 		size = strlen(fileList);
-		fileList = realloc(fileList, size + strlen(fileNameList[i]));
+		fileList = realloc(fileList, size + strlen(fileNameList[i]) + 1);
         if(fileList == NULL) {
         	printf("Error while trying to \"realloc\" the fileList string!\nClosing...\n");
 			exit(-1);
         }
-        bzero(fileList + size, strlen(fileNameList[i]));
-
         strcat(fileList, fileNameList[i]);
 	}
+
 
     return fileList;
 }
