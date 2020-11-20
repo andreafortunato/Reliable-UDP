@@ -10,6 +10,7 @@ typedef struct _ClientNode {
 	unsigned int sockfd;					/* Descrittore del socket */
 	char ip[16];							/* IP Address */
 	unsigned int clientPort;				/* Porta sorgente del Client */
+	struct sockaddr_in connection;			/* Struttura associata ai dati del Client */
  
 	pthread_t tid;							/* Thread ID temporaneo associato al Client */
 	unsigned int serverPort;				/* Porta del server riservata al Client*/
@@ -37,16 +38,13 @@ typedef struct _ThreadArgs {
 
 /* ************************************************************************************************************************************* */
 
-ThreadArgs* newThreadArgs(Sockaddr_in clientSocket, Segment segment, ClientNode *client) {
+ThreadArgs* newThreadArgs(Sockaddr_in clientSocket, Segment segment) {
 	ThreadArgs *threadArgs = (ThreadArgs *) malloc(sizeof(ThreadArgs));
 	if(threadArgs != NULL)
 	{	
 		bzero(threadArgs, sizeof(ThreadArgs));
 		threadArgs -> clientSocket = clientSocket;
 		threadArgs -> segment = segment;
-		if(client) {
-			threadArgs -> client = client;
-		}
 	} else {
 		printf("Error while trying to \"malloc\" a new ThreadArgs!\nClosing...\n");
 		exit(-1);
@@ -56,7 +54,7 @@ ThreadArgs* newThreadArgs(Sockaddr_in clientSocket, Segment segment, ClientNode 
 }
 
 /* Inizializzazione di un nuovo client */
-ClientNode* newNode(unsigned int sockfd, char *ip, unsigned int clientPort, pthread_t tid, unsigned int serverPort, char *lastSeqClient) {
+ClientNode* newNode(unsigned int sockfd, char *ip, unsigned int clientPort, struct sockaddr_in clientSocket, pthread_t tid, unsigned int serverPort, char *lastSeqClient) {
 	ClientNode *node = (ClientNode *) malloc(sizeof(ClientNode));
 	if(node != NULL)
 	{	
@@ -64,6 +62,7 @@ ClientNode* newNode(unsigned int sockfd, char *ip, unsigned int clientPort, pthr
 		node -> sockfd = sockfd;
 		strcpy(node -> ip, ip);
 		node -> clientPort = clientPort;
+		node -> connection = clientSocket;
 
 		node -> tid = tid;
 		node -> serverPort = serverPort;
@@ -161,6 +160,7 @@ void addClientNode(ClientNode **clientList, ClientNode *newClient, int *clientLi
 
 /* Elimina un client dalla lista clientList */
 void deleteClientNode(ClientNode **clientList, ClientNode *client, int *clientListSize, int *maxSockFd) {
+
 	ClientNode *current;
 
 	current = *clientList;

@@ -3,6 +3,9 @@
 
 #define SOCKBUFLEN 64844	/* (1500+8)*43 = (MSS+HEADER_UDP)*MAX_WIN_SIZE */
 
+#define LOSS_PROB 30  		/* Probabiltà di perdita */
+#define WIN_SIZE 5			/* Dimensione finestra */
+
 /* Dimensione campo Seq/Ack 11 perchè il massimo valore rappresentabile
    in TCP è (2^16)-1 = 4294967295, quindi 10 caratteri + '\0'*/
 // Provare 2**16 pow(2,16) per elevare 2 alla 16
@@ -11,8 +14,7 @@
 #define CMD 2
 #define WIN 3				/* La massima finestra sarà "43" (65536/1500 = (MAX_WIN_SIZE in byte)/MSS), ovvero 2 caratteri + '\0' */
 #define BYTE_MSG 5
-// #define MSG 4056
-#define LEN_MSG 500			/* MSS-(lunghezza di tutti i campi) = 1460 byte rimanenti*/
+#define LEN_MSG 200		/* MSS-(lunghezza di tutti i campi) = 1460 byte rimanenti*/
 
 /**/
 #define TRUE "1"
@@ -36,53 +38,60 @@ typedef struct _Segment
 
 	char cmdType[CMD];				/* Operazione richiesta */
 	char lenMsg[BYTE_MSG];			/* Lunghezza, in byte, del campo msg */
-	char msg[LEN_MSG];				/* Contenuto del messaggio */
+	int msg[LEN_MSG];				/* Contenuto del messaggio */
 } Segment;
 
+void newSegment(Segment **segment, char *eotBit, int seqNum, int ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, int *msg);
+Segment* mallocSegment(char *eotBit, int seqNum, int ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, int *msg);
 
 /* ***************************************************************************************** */
 
 /* Inizializzazione di un nuovo client */
-void newSegment(Segment *segment, int seqNum, int ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, char *msg) {
+void newSegment(Segment **segment, char *eotBit, int seqNum, int ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, int *msg) {
+
+	if(*segment == NULL) {
+		*segment = mallocSegment(eotBit, seqNum, ackNum, synBit, ackBit, finBit, cmdType, lenMsg, msg);
+	}
 
 	int i;
 	char tmpBuff[LEN_MSG];
-	bzero(segment, sizeof(Segment));
 
-	strcpy(segment -> eotBit, "1");
+	bzero((*segment), sizeof(Segment));
+
+	strcpy((*segment) -> eotBit, eotBit);
 
 	sprintf(tmpBuff, "%d", seqNum);
-	strcpy(segment -> seqNum, tmpBuff);
+	strcpy((*segment) -> seqNum, tmpBuff);
 	bzero(tmpBuff, LEN_MSG);
 	if(ackNum != -1) {
 		sprintf(tmpBuff, "%d", ackNum);
-		strcpy(segment -> ackNum, tmpBuff);
+		strcpy((*segment) -> ackNum, tmpBuff);
 		bzero(tmpBuff, LEN_MSG);
 	} else {
-		strcpy(segment -> ackNum, EMPTY);
+		strcpy((*segment) -> ackNum, EMPTY);
 	}
-	
 
-	strcpy(segment -> synBit, synBit);
-	strcpy(segment -> ackBit, ackBit);
-	strcpy(segment -> finBit, finBit);
+	strcpy((*segment) -> synBit, synBit);
+	strcpy((*segment) -> ackBit, ackBit);
+	strcpy((*segment) -> finBit, finBit);
 	
-	strcpy(segment -> winSize, "5");
+	strcpy((*segment) -> winSize, "5");
 	
-	strcpy(segment -> cmdType, cmdType);
+	strcpy((*segment) -> cmdType, cmdType);
 	sprintf(tmpBuff, "%d", lenMsg);
-	strcpy(segment -> lenMsg, tmpBuff);
+	strcpy((*segment) -> lenMsg, tmpBuff);
 
 	for(i = 0; i < lenMsg; i++) 
-		(segment -> msg)[i] = msg[i];
+		((*segment) -> msg)[i] = msg[i];
+
 }
 
 /* Inizializzazione di un nuovo client */
-Segment* mallocSegment(int seqNum, int ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, char *msg) {
+Segment* mallocSegment(char *eotBit, int seqNum, int ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, int *msg) {
 	Segment *segment = (Segment*) malloc(sizeof(Segment));
 	if(segment != NULL)
 	{
-		newSegment(segment, seqNum, ackNum, synBit, ackBit, finBit, cmdType, lenMsg, msg);
+		newSegment(&segment, eotBit, seqNum, ackNum, synBit, ackBit, finBit, cmdType, lenMsg, msg);
 	} else {
 		printf("Error while trying to \"malloc\" a new Segment!\nClosing...\n");
 		exit(-1);
@@ -321,30 +330,74 @@ int parseCmdLine(int argc, char **argv, char *who, char **ip, int *debug)
 	}
 }
 
-void recvSegment(int sockFd, Segment *segment, Sockaddr_in *socket, int *socketLen) {
+int* strToInt(char* inStr) {
+	int len = strlen(inStr)*sizeof(int);
+	int *outInt = malloc(len);
+	if(outInt == NULL) {
+		printf("Error while trying to \"malloc\" a new outInt!\nClosing...\n");
+		exit(-1);
+	} 
+	bzero(outInt, len);
+
+	for(int i=0; i<(len/sizeof(int)); i++) {
+		outInt[i] = htonl((int)inStr[i]);
+	}
+
+	return outInt;
+}
+
+char* intToStr(int* inInt, int len) {
+	char *outStr = malloc(len+1);
+	if(outStr == NULL) {
+		printf("Error while trying to \"malloc\" a new outStr!\nClosing...\n");
+		exit(-1);
+	} 
+	bzero(outStr, len+1);
+
+	for(int i=0; i<len; i++) {
+		outStr[i] = (char)(ntohl(inInt[i]));
+	}
+
+	return outStr;
+}
+
+int recvSegment(int sockFd, Segment *segment, Sockaddr_in *socket, int *socketLen) {
 
 	bzero(segment, sizeof(Segment));
+	int ret;
 	while(1){
-            if(recvfrom(sockFd, segment, sizeof(Segment), 0, (struct sockaddr*)socket, (socklen_t*)socketLen) < 0) {
-                printf("[Error]: recvfrom failed for %s:%d\n", inet_ntoa(socket -> sin_addr), ntohs(socket -> sin_port));
-                exit(-1);
+            if((ret = recvfrom(sockFd, segment, sizeof(Segment), 0, (struct sockaddr*)socket, (socklen_t*)socketLen)) < 0) {
+                // wprintf(L"[Error]: recvfrom failed for %s:%d\n", inet_ntoa(socket -> sin_addr), ntohs(socket -> sin_port));
+                // exit(-1);
+                return ret;
             }
             if((strlen(segment -> eotBit) == 0) || (strlen(segment -> seqNum) == 0) || 
                (strlen(segment -> ackNum) == 0) || (strlen(segment -> synBit) == 0) || 
                (strlen(segment -> ackBit) == 0) || (strlen(segment -> finBit) == 0) || 
                (strlen(segment -> winSize) == 0) || (strlen(segment -> cmdType) == 0) ||
-               (strlen(segment -> msg) == 0)) 
+               (segment -> msg == 0))
             {
                 printf("\n[Error]: Empty segment received from client %s:%d\n", inet_ntoa(socket -> sin_addr), ntohs(socket -> sin_port));
             }
             else {
                 break;  
             }
-        }
+    }
+
+    return ret;
+
 }
 
 int sup(int dividend, int divisor) {
 	return ((dividend-1)/divisor)+1;
+}
+
+int winSlot(int lastSeqNumRcv, int lastAckedSeqNum) {	
+	return (lastSeqNumRcv - lastAckedSeqNum);
+}
+
+void slideWin() {
+
 }
 
 #endif

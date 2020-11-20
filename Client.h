@@ -26,8 +26,8 @@ void makeClientMenu()
 		wprintf(L"%lc", separator);
 	wprintf(L"%lc\n", dx);
 	wprintf(L"%lc 1. List of available files.\t\t\t%lc\n", sx, dx);
-	wprintf(L"%lc 2. Upload file.\t\t\t\t%lc\n", sx, dx);
-	wprintf(L"%lc 3. Download file.\t\t\t\t%lc\n", sx, dx);
+	wprintf(L"%lc 2. Download file.\t\t\t\t%lc\n", sx, dx);
+	wprintf(L"%lc 3. Upload file.\t\t\t\t%lc\n", sx, dx);
 	wprintf(L"%lc 4. Quit.\t\t\t\t\t%lc\n%lc", sx, dx, downsx);
 	for(int i = 0; i < 47; i++)
 		wprintf(L"%lc", down);
@@ -56,10 +56,6 @@ int clientChoice()
 	} while(choice < 1 || choice > 4);
 
 	return choice;
-}
-
-void download() {
-	return;
 }
 
 #endif

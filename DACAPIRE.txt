@@ -33,3 +33,6 @@ msg: 101->120
 				ack: 121
 
 			FINE
+
+
+((lastByteRcv - lastAckByteRcv)/(LEN_MSG))-1; 
