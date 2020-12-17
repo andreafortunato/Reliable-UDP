@@ -1,19 +1,10 @@
 // https://packetlife.net/blog/2010/jun/7/understanding-tcp-sequence-acknowledgment-numbers/
 
 // Server - FTP on UDP 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <pthread.h>
+
 #include <time.h>
 #include <signal.h>
-#include <ctype.h>
-#include <errno.h>
+#include <stdbool.h>
 #include "Server.h"
 
 #define IP_PROTOCOL 0
@@ -21,12 +12,21 @@
 /* Prototipi */
 void *client_thread_handshake(void *);      /* Thread associato al client */
 void *client_thread_list(void *);
+void *client_thread_download(void *);
+void *client_thread_upload(void *);
 void list(ClientNode *client);
 void download(ClientNode *client, char *fileName);
 void fin(ClientNode *client);
-void *client_thread_download(void *);
-void *client_thread_upload(void *);
 void ctrl_c_handler();
+
+/**********/
+
+void *timeout_thread(void *);
+void *continuous_send_thread(void *);
+void *continuous_recv_thread(void *);
+
+/**********/
+
 
 /* Variabili globali */
 pthread_rwlock_t lockList;                  /* Semaforo Read/Write necessario per la gestione degli accessi alla lista */
@@ -41,6 +41,29 @@ int clientListSize = 0;
 int maxSockFd = 0;
 
 int maxSeqNum;
+
+// Variabili da buttare dentro i singoli thread relativi ad ogni operazione
+                                        // Main		Timeout		Send	Recv
+Segment sndWindow[WIN_SIZE];            // W					R		R/W
+int segToSend[WIN_SIZE];                // W					R/W
+int segSent[WIN_SIZE];                  // 			R			W		W
+int sndWinPos = 0;                      // R/W							W
+int sndPos = 0;                         // 						R/W		W		(Mutex: sndPosLock)
+struct timeval segTimeout[WIN_SIZE];    // 			R			W				(Nulla, non ci interessa la concorrenza)
+SegQueue *queueHead = NULL;             // 			W			R/W				(Mutex: queueLock)
+Segment rcvWindow[WIN_SIZE];            // 
+int rcvWinFlag[WIN_SIZE];               // 
+// pthread_mutex_t sndPosLock;				// 
+pthread_mutex_t queueLock;				// 			X			X
+pthread_rwlock_t slideLock;             // 
+pthread_t timeoutTid, sendTid;
+int maxTimeout = 5000; // DA CALCOLARE IN BASE ALL'RTT, A CASO 5 (secondi)
+int sendQueue;
+ClientNode *clientThread;
+int addrlenClientThread;
+Sockaddr_in clientSocketThread;
+
+/* 32785972 mutex */
 
 // Main - Server 
 int main(int argc, char *argv[])
@@ -96,7 +119,7 @@ int main(int argc, char *argv[])
 	{
 		printf("Error while trying to \"malloc\" a new rcvSegment!\nClosing...\n");
 		exit(-1);
-	} 
+	}
 
 	/* Struttura threadArgs per parametri del thread */
     ThreadArgs *threadArgs = (ThreadArgs*)malloc(sizeof(ThreadArgs));
@@ -371,20 +394,13 @@ void list(ClientNode *client) {
 
 /* Funzione download */
 void download(ClientNode *client, char *fileName)
-{    
-    Segment *sndSegment = NULL;
-    Segment *rcvSegment = (Segment*) malloc(sizeof(Segment));
-    if(rcvSegment == NULL) {
-        printf("Error while trying to \"malloc\" a new download rcvSegment of (%s:%d)!\nClosing...\n", client -> ip, client -> clientPort);
-        exit(-1);
-    }
-
-    int addrlenClient = sizeof(client -> connection);
-
-    printf("\nFile richiesto: %s\n", fileName);
+{
+	printf("\nFile richiesto: %s\n", fileName);
 
     /* Se il file è presente nel server */
     if(fileExist(fileNameList, fileName, numFiles)) {
+    	pthread_t uselessTid;
+    	Segment *sndSegment = NULL;
 
         // Aprire il file da inviare e scriverlo dentro sndSegment...
         FILE *file = fopen(fileName, "rb");
@@ -399,6 +415,52 @@ void download(ClientNode *client, char *fileName)
 
         int totalSegs = (fileLen-1)/(LEN_MSG) + 1; /* Formula della vita: (A-1)/B+1, parte intera superiore della divisione A/B */
         printf("\nTotalsegs: %d - fileLen: %d\n", totalSegs, fileLen);
+
+        /* Inizializzazione strutture condivise */
+        for(int i=0; i<WIN_SIZE; i++)
+            segToSend[i] = 0;
+
+        for(int i=0; i<WIN_SIZE; i++)
+            segSent[i] = 0;
+
+        sendQueue = 1;
+
+
+        /* Inizializzazione semaforo R/W */
+        if(pthread_rwlock_init(&slideLock, NULL) != 0) {
+            printf("Failed slideLock semaphore initialization.\n");
+            exit(-1);
+        }
+
+        if(pthread_mutex_init(&queueLock, NULL) != 0) {
+        	printf("Failed queueLock semaphore initialization.\n");
+            exit(-1);
+        }
+        
+
+
+        clientThread = client;
+        addrlenClientThread = sizeof(clientThread -> connection);
+
+        int ret;
+        ret = pthread_create(&timeoutTid, NULL, timeout_thread, NULL);
+        if(ret != 0)
+        {
+            printf("New timeout thread error\n");
+            exit(-1);
+        }
+        ret = pthread_create(&sendTid, NULL, continuous_send_thread, NULL);
+        if(ret != 0)
+        {
+            printf("New continuous send thread error\n");
+            exit(-1);
+        }
+        ret = pthread_create(&uselessTid, NULL, continuous_recv_thread, NULL);
+        if(ret != 0)
+        {
+            printf("New continuous recv thread error\n");
+            exit(-1);
+        }
 
         int buffFile[LEN_MSG];
         int ch;
@@ -415,70 +477,282 @@ void download(ClientNode *client, char *fileName)
             }
 
             if(i == totalSegs-1)
-                newSegment(&sndSegment, TRUE, (i%maxSeqNum)+1, -1, FALSE, FALSE, FALSE, "1", j-1, buffFile);
+                newSegment(&sndSegment, TRUE, (i%maxSeqNum)+1, -1, FALSE, FALSE, FALSE, "2", j-1, buffFile);
             else
-                newSegment(&sndSegment, FALSE, (i%maxSeqNum)+1, -1, FALSE, FALSE, FALSE, "1", j-1, buffFile);
+                newSegment(&sndSegment, FALSE, (i%maxSeqNum)+1, -1, FALSE, FALSE, FALSE, "2", j-1, buffFile);
 
-            /* Tenta invio */
-            if((rand()%100 + 1) > LOSS_PROB) {
-                //sendto(client -> sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&(client -> connection), addrlenClient);
-            }
-            sendto(client -> sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&(client -> connection), addrlenClient);
-            //printf("\nInvio pacchetto - (seqNum: %d)\n", atoi(sndSegment -> seqNum));
-            recvSegment(client -> sockfd, rcvSegment, &(client -> connection), &addrlenClient);
-            //printf("Ricevuto pacchetto - (ackNum: %d)\n", atoi(rcvSegment -> ackNum));
+            /* Attendi scorrimento finestra */
+            while(sndWinPos >= WIN_SIZE);
+
+            pthread_rwlock_rdlock(&slideLock);
+
+            sndWindow[sndWinPos] = *sndSegment;
+            segToSend[sndWinPos] = 1;
+
+            printf("\n[MAIN] -> Caricato pacchetto: (seqNum: %d) - (sndWinPos: %d)\n", atoi(sndSegment -> seqNum), sndWinPos);
+
+            sndWinPos++;
+
+            pthread_rwlock_unlock(&slideLock);
+            
         }
 
-        printf("Fine invio pacchetti\n");
+        printf("Fine caricamento pacchetti\n");
         fclose(file);
     }
     else {
         printf("\nFile not found!\n");
     }
 
-    free(sndSegment);
-    free(rcvSegment);
-
-    fin(client);
+    pthread_exit(0);
 }
 
-/* Funzione per la chiusura della connessione */
-void fin(ClientNode *client) {
+void *timeout_thread(void *args) {
+	pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
-    int addrlenClient = sizeof(client -> connection);
+	printf("\n[TIMEOUT] -> TIRATO SU\n");
 
-    int ackNum;
-    int *tmpIntBuff;
+    int timeoutPos = 0;    
 
-    Segment *sndSegment = NULL;
+    while(1) {
+        // prendi token (qui? in lettura o in scrittura?)
+        pthread_rwlock_rdlock(&slideLock);
+        if(segSent[timeoutPos] == 1) {
+            if(elapsedTime(segTimeout[timeoutPos]) > maxTimeout) {
+                
+                pthread_mutex_lock(&queueLock);
 
-    Segment *rcvSegment = (Segment*) malloc(sizeof(Segment));
+                printf("\n[TIMEOUT] -> Timeout scaduto: (seqNum: %d) - (timeoutPos: %d)\n", atoi(sndWindow[timeoutPos].seqNum), timeoutPos);
+
+                appendSegToQueue(&queueHead, sndWindow[timeoutPos], timeoutPos);
+
+                pthread_mutex_unlock(&queueLock);
+                
+            }
+            timeoutPos = (timeoutPos+1) % WIN_SIZE;
+        }
+        pthread_rwlock_unlock(&slideLock);
+    }
+}
+
+
+void *continuous_send_thread(void *args) {
+	pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+	
+	printf("\n[SEND] -> TIRATO SU\n");
+
+    //int sndWinPos = (int*)args;
+
+    SegQueue *prev;
+
+    while(1) {
+        pthread_rwlock_rdlock(&slideLock);
+        printf("[SEND] -> slideLock preso\n");
+        // pthread_mutex_lock(&sndPosLock);
+
+        // usleep(30*1000);
+
+        // inivio intera coda
+        while(queueHead != NULL && sendQueue == 1) {
+        	prev = queueHead;
+
+            gettimeofday(&segTimeout[queueHead -> winPos], NULL);
+            printf("\n[SEND] -> Invio pacchetto in coda: (seqNum: %d) - (winPos: %d)\n", atoi((queueHead -> segment).seqNum), queueHead -> winPos);
+            randomSendTo(clientThread -> sockfd, &(queueHead -> segment), (struct sockaddr*)&(clientThread -> connection), addrlenClientThread);
+
+            pthread_mutex_lock(&queueLock);
+            queueHead = queueHead -> next;
+            free(prev);
+            pthread_mutex_unlock(&queueLock);
+        }
+
+
+        
+        /* (Primo controllo) Se la recv ha ricevuto un ACK 'corretto', interrompe l'invio della coda (sendQueue=0)
+           e resetta lo stato della send;
+           (Secondo controllo) Se ho inviato tutta la finestra (ovvero tutti i segToSend==0) resetto 
+           lo stato della send */
+        if(sendQueue == 0 || segToSend[sndPos] == 0) {
+        	// pthread_mutex_unlock(&sndPosLock);
+        	pthread_rwlock_unlock(&slideLock);
+            continue;
+        }
+
+        printf("\n[SEND] -> Invio pacchetto: (seqNum: ");
+        printf("%d) - (sndPos: %d)\n", atoi(sndWindow[sndPos].seqNum), sndPos);
+        randomSendTo(clientThread -> sockfd, &(sndWindow[sndPos]), (struct sockaddr*)&(clientThread -> connection), addrlenClientThread);
+        gettimeofday(&segTimeout[sndPos], NULL);
+        segToSend[sndPos] = 0;
+        segSent[sndPos] = 1;
+
+        //printf("\nInvio pacchetto - (seqNum: %d)\n", atoi(sndSegment -> seqNum));
+
+        sndPos = (sndPos+1) % WIN_SIZE;
+        // pthread_mutex_unlock(&sndPosLock);
+        pthread_rwlock_unlock(&slideLock);
+    }
+}
+
+
+void *continuous_recv_thread(void *args){
+	printf("\n[RECV] -> TIRATO SU\n");
+
+    Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
     if(rcvSegment == NULL)
     {
-        printf("Error while trying to \"malloc\" a new segment for FIN operation!\nClosing...\n");
+        printf("Error while trying to \"malloc\" a new rcvSegment!\nClosing...\n");
         exit(-1);
     }
 
-    /* Ricezione FIN */
-    recvSegment(client -> sockfd, rcvSegment, &(client -> connection), &addrlenClient);
+    int lastAck = 1;
+    int countAck = 0;
+    bool invalidAck = false;
+    int rcvAck;
+    int slideSize;
 
-    /* Invio ACK del FIN */
-    ackNum = atoi(rcvSegment -> seqNum) + 1;
-    tmpIntBuff = strToInt(EMPTY);
-    newSegment(&sndSegment, FALSE, 2, ackNum, FALSE, TRUE, FALSE, EMPTY, 1, tmpIntBuff);
-    sendto(client -> sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&(client -> connection), addrlenClient);
+    while(1) {
+        recvSegment(clientThread -> sockfd, rcvSegment, &(clientThread -> connection), &addrlenClientThread);
+        rcvAck = atoi(rcvSegment -> ackNum);
+        printf("\n[RECV] -> Ricevuto ACK: (seqNum: %d) - (ackNum: %d)\n", atoi(rcvSegment -> seqNum), rcvAck);
 
-    /* Invio FIN */
-    newSegment(&sndSegment, FALSE, 2, ackNum, FALSE, TRUE, TRUE, EMPTY, 1, tmpIntBuff);
-    sendto(client -> sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&(client -> connection), addrlenClient);
+        if(atoi(rcvSegment -> finBit) == 1) {
+        	printf("\n[RECV] -> Ricevuto pacchetto di FIN: (seqNum: %d) - (ackNum: %d)\n", atoi(rcvSegment -> seqNum), rcvAck);
+            // TIRA GIU' TUTTO
+            pthread_cancel(timeoutTid);
+            pthread_cancel(sendTid);
+            printf("\n[RECV] -> Cancellati Timeout/Send Thread");
+            pthread_join(timeoutTid, NULL);
+            printf("\n[RECV] -> Joinato Timeout Thread");
+            pthread_join(sendTid, NULL);
+            printf("\n[RECV] -> Joinato Send Thread");
 
-    /* Ricezione ACK del FIN */
-    recvSegment(client -> sockfd, rcvSegment, &(client -> connection), &addrlenClient);
+            /* Distruzione semafori */
+            if(pthread_rwlock_destroy(&slideLock) != 0) {
+                printf("Failed slideLock semaphore destruction.\n");
+                exit(-1);
+            }
 
-    free(tmpIntBuff);
+            if(pthread_mutex_destroy(&queueLock) != 0) {
+                printf("Failed queueLock semaphore destruction.\n");
+                exit(-1);
+            }
 
-    deleteClientNode(&clientList, client, &clientListSize, &maxSockFd);
-    printf("\nTrasmissione terminata e disconnessione effettuata con successo!\n");
+
+            printf("\n[RECV] -> Sta per partire FIN\n");
+            fin(clientThread);
+            pthread_exit(0);
+        }
+        
+        /* Se l'ACK ricevuto è inerente ad un pacchetto già riscontrato */
+        /* Se l'ACK ricevuto rientra tra uno dei seqNum appartententi a "sndWindow[0].seqNum, sndWindow[-1].seqNum, ..., sndWindow[-(WIN_SIZE-1)].seqNum", ignoriamo l'ACK */
+        for(int i = 0; i < WIN_SIZE; i++) {
+            invalidAck = invalidAck || (rcvAck == normalize(atoi(sndWindow[0].seqNum), i));
+            if (invalidAck)
+                break;
+        }
+        
+        if(invalidAck) {
+            if(rcvAck == lastAck) {
+                if(++countAck == 3) {
+                    countAck = 0;
+                    // reinvio();
+                    // sendto(clientThread -> sockfd, &(SEGMENTO DA INVIARE), sizeof(Segment), 0, (struct sockaddr*)&(clientThread -> connection), addrlenClientThread);
+                    continue;
+                }
+            } else {
+                lastAck = rcvAck;
+                countAck = 1;
+            }
+        }
+        /* Se l'ACK ricevuto è valido e permette uno slide della finestra (rientra tra sndWindow[1].seqNum, ..., sndWindow[WIN_SIZE].seqNum) */ 
+        else {
+        	sendQueue = 0;
+        	pthread_rwlock_wrlock(&slideLock);
+        	printf("\n[RECV] -> Ack valido: (seqNum: %d) - (ackNum: %d)\n", atoi(rcvSegment -> seqNum), rcvAck);
+
+            lastAck = rcvAck;
+            countAck = 1;
+
+            // pthread_mutex_lock(&queueLock);
+            int maxSeqNumSendable = (atoi(sndWindow[0].seqNum) + WIN_SIZE)%maxSeqNum -1;
+            int distance = normalizeDistance(maxSeqNumSendable, rcvAck);
+
+            SegQueue *current = queueHead;
+            SegQueue *prev = queueHead;
+            while(current != NULL) {
+            	prev = current;
+            	current = current -> next;
+            	if(isSeqMinor(rcvAck, atoi((prev -> segment).seqNum), distance))
+            		deleteSegFromQueue(&queueHead, prev);
+            		
+            		//free(prev);
+            }
+            // pthread_mutex_unlock(&queueLock);
+
+            // 9 -> 9 10 1 2 3 4 5 6 7 8
+            // 7 -> 7 8 9 10 1 2 3 4 5 6
+            // 1 -> 1 2 3 4 5
+
+            // WIND:  8 9 10 1 2
+            // INDEX: 0 1 2  3 4
+            // CODA1: 8 9 10 1 2
+            // CODA2: 10 1 2 8 9
+
+            // -1 = (2-1)%10 + 1 = 2
+
+            // -1 = (8-1)%10 + 1 = 8  OK
+            // 0  = (8+0)%10 + 1 = 9  OK
+            // 1  = (8+1)%10 + 1 = 10  OK
+            // 2  = (8+2)%10 + 1 = 1  OK
+            // 3  = (8+3)%10 + 1 = 2  OK
+
+            // -1 = (9-1)%10 + 1 = 9  OK
+            // 0  = (9+0)%10 + 1 = 10  OK
+            // 1  = (9+1)%10 + 1 = 1  OK
+            // 2  = (9+2)%10 + 1 = 2  OK
+
+            // -1 = (10-1)%10 + 1 = 10  OK
+            // 0  = (10+0)%10 + 1 = 1  OK
+            // 1  = (10+1)%10 + 1 = 2  OK
+
+            // -1 = (1-1)%10 + 1 = 1  OK
+            // 0  = (1+0)%10 + 1 = 2  OK
+
+            // -1 = (2-1)%10 + 1 = 2  OK
+
+            // Gli altri thread utilizzeranno un rw_lock e il recv potrà cambiare la coda cancellando i pkt fino a quell'ack,
+            // ma siamo sicuri che i pacchetti sono aggiunti in ordine? E come li cancelliamo? Come riscontriamo i pacchetti?
+            // Segnando i pacchetti fino a quell'ack come riscontrati? Quando ricevo un ack questo è cumulativo, riscontra tutti
+            // i precedenti... Nella coda che faccio?
+            
+            slideSize = normalize(rcvAck, atoi(sndWindow[0].seqNum));
+
+            memmove(sndWindow, &sndWindow[slideSize], sizeof(Segment)*(WIN_SIZE-slideSize));
+
+            memmove(segToSend, &segToSend[slideSize], sizeof(int)*(WIN_SIZE-slideSize));
+            memset(&segToSend[WIN_SIZE-slideSize], 0, sizeof(int)*slideSize);
+
+            memmove(segSent, &segSent[slideSize], sizeof(int)*(WIN_SIZE-slideSize));
+            memset(&segSent[WIN_SIZE-slideSize], 0, sizeof(int)*slideSize);
+
+            memmove(segTimeout, &segTimeout[slideSize], sizeof(struct timeval)*(WIN_SIZE-slideSize));
+
+            sndWinPos -= slideSize;
+            // pthread_mutex_lock(&sndPosLock);
+
+            if(sndPos != 0){
+            	sndPos -= slideSize;
+            } else {
+            	sndPos = sndWinPos;
+            }
+
+            // pthread_mutex_unlock(&sndPosLock);
+
+            sendQueue = 1;
+
+            pthread_rwlock_unlock(&slideLock);
+        }
+    }
 }
 
 /* Thread associato al client */
@@ -497,4 +771,44 @@ void *client_thread_upload(void *args)
 
     //close(clientSockFd);
     pthread_exit(NULL);
+}
+
+/* Funzione per la chiusura della connessione */
+void fin(ClientNode *client) {
+	printf("[FIN] -> Partito\n");
+
+    int addrlenClient = sizeof(client -> connection);
+
+    int ackNum;
+    int *tmpIntBuff;
+
+    Segment *sndSegment = NULL;
+
+    Segment *rcvSegment = (Segment*) malloc(sizeof(Segment));
+    if(rcvSegment == NULL)
+    {
+        printf("Error while trying to \"malloc\" a new segment for FIN operation!\nClosing...\n");
+        exit(-1);
+    }
+
+    /* Ricezione FIN */
+    //recvSegment(client -> sockfd, rcvSegment, &(client -> connection), &addrlenClient);
+
+    /* Invio ACK del FIN */
+    ackNum = atoi(rcvSegment -> seqNum) + 1;
+    tmpIntBuff = strToInt(EMPTY);
+    newSegment(&sndSegment, FALSE, 2, ackNum, FALSE, TRUE, FALSE, EMPTY, 1, tmpIntBuff);
+    sendto(client -> sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&(client -> connection), addrlenClient);
+
+    /* Invio FIN */
+    newSegment(&sndSegment, FALSE, 2, ackNum, FALSE, TRUE, TRUE, EMPTY, 1, tmpIntBuff);
+    sendto(client -> sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&(client -> connection), addrlenClient);
+
+    /* Ricezione ACK del FIN */
+    recvSegment(client -> sockfd, rcvSegment, &(client -> connection), &addrlenClient);
+
+    free(tmpIntBuff);
+
+    deleteClientNode(&clientList, client, &clientListSize, &maxSockFd);
+    printf("\nTrasmissione terminata e disconnessione effettuata con successo!\n");
 }

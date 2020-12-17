@@ -1,17 +1,7 @@
 // Client - FTP on UDP 
-#include <arpa/inet.h> 
-#include <netinet/in.h> 
-#include <stdio.h> 
-#include <stdlib.h> 
-#include <string.h> 
-#include <sys/socket.h> 
-#include <sys/types.h> 
-#include <sys/time.h>
-#include <unistd.h>
+
 #include <wchar.h>
 #include <locale.h>
-#include <ctype.h>
-#include <errno.h>
 #include "Client.h"
   
 #define IP_PROTOCOL 0       /* Protocollo UDP default */
@@ -25,26 +15,30 @@ void download(char*);
 void fin();
 void cpOnFile(FILE*, char*, int);
 int allReceived();
+void *thread_consumeSegment(void *filename);
 
 
 int debug = 0;              /* 1 se l'utente vuole avviare il client in modalità 'Debug' 
                                per visualizzare informazioni aggiuntive, 0 altrimenti */
 int sockfd;  
-int lastSeqNumSend;
+int lastSeqNumSent;
 int lastSeqNumRecv;
-int lastAckNumSend;
+int lastAckNumSent;
 
 Segment sndWindow[WIN_SIZE];
+int sndWinFlag[WIN_SIZE];
 Segment rcvWindow[WIN_SIZE];
-int hashMapRcv[WIN_SIZE];
+int rcvWinFlag[WIN_SIZE];
 int maxSeqNum;
 
+pthread_mutex_t consumeLock;
+
 /* Sockaddr_in server, utilizzata per l'handshake e le richieste di operazioni */
-Sockaddr_in mainServerSocket; 
+Sockaddr_in mainServerSocket;
 int addrlenMainServerSocket;
 
 /* Sockaddr_in server, utilizzata per l'esecuzione delle operazioni */
-Sockaddr_in operationServerSocket; 
+Sockaddr_in operationServerSocket;
 int addrlenOperationServerSocket;
 
 // Main - Client
@@ -150,7 +144,7 @@ int main(int argc, char *argv[])
                 download(filename);
 
                 /* Fase di chiusura */
-                fin(TRUE);
+                // fin(TRUE);
 
                 break;
 
@@ -225,19 +219,19 @@ void list() {
         exit(-1);
     } 
 
-    memset(hashMapRcv, 0, WIN_SIZE*sizeof(int));
+    memset(rcvWinFlag, 0, WIN_SIZE*sizeof(int));
 
     /* Comando LIST */
     tmpIntBuff = strToInt(EMPTY);
     newSegment(&sndSegment, FALSE, 1, -1, FALSE, FALSE, FALSE, "1", 1, tmpIntBuff);
     free(tmpIntBuff);
     sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
-    lastSeqNumSend = 0;
+    lastSeqNumSent = 0;
 
     sndWindow[0] = *sndSegment;
 
     /* Inizializzazione del primo pkt atteso */
-    lastAckNumSend = 1;
+    lastAckNumSent = 1;
 
     wprintf(L"Lista file: \n\n");
     while(1) {
@@ -245,15 +239,15 @@ void list() {
         recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket);
         lastSeqNumRecv = atoi(rcvSegment -> seqNum);
         
-        /* Calcolo slot finestra e memorizzazione segmento ricevuto e aggiornamento hashMapRcv */
-        slot = winSlot(lastSeqNumRecv, lastAckNumSend);
+        /* Calcolo slot finestra e memorizzazione segmento ricevuto e aggiornamento rcvWinFlag */
+        slot = rcvWinSlot(lastSeqNumRecv, lastAckNumSent);
 
-        //wprintf(L"\nRicevuto pacchetto - (seqNum: %d) - (slot: %d) - %d\n", atoi(rcvSegment -> seqNum), slot, hashMapRcv[0]);
+        //wprintf(L"\nRicevuto pacchetto - (seqNum: %d) - (slot: %d) - %d\n", atoi(rcvSegment -> seqNum), slot, rcvWinFlag[0]);
 
         if(!((slot < 0) || (slot > WIN_SIZE-1))) {
 
             rcvWindow[slot] = *rcvSegment;
-            hashMapRcv[slot] = 1;
+            rcvWinFlag[slot] = 1;
 
             /* Pacchetto atteso */
             if(slot == 0) {
@@ -263,17 +257,17 @@ void list() {
                     wprintf(L"%s", tmpStrBuff);
                     free(tmpStrBuff);
                     slot++;
-                } while((slot != WIN_SIZE) && (hashMapRcv[slot] != 0));
+                } while((slot != WIN_SIZE) && (rcvWinFlag[slot] != 0));
             
-                lastAckNumSend = atoi(rcvWindow[slot-1].seqNum)%maxSeqNum + 1;
+                lastAckNumSent = atoi(rcvWindow[slot-1].seqNum)%maxSeqNum + 1;
                 
-                /* Shift finestra e hashMapRcv */
+                /* Shift finestra e rcvWinFlag */
                 if(slot == WIN_SIZE) {
-                    memset(hashMapRcv, 0, sizeof(int)*WIN_SIZE);
+                    memset(rcvWinFlag, 0, sizeof(int)*WIN_SIZE);
                 }
                 else {
-                    memmove(hashMapRcv, &hashMapRcv[slot], sizeof(int)*(WIN_SIZE-slot));
-                    memset(&hashMapRcv[WIN_SIZE-slot], 0, sizeof(int)*slot);
+                    memmove(rcvWinFlag, &rcvWinFlag[slot], sizeof(int)*(WIN_SIZE-slot));
+                    memset(&rcvWinFlag[WIN_SIZE-slot], 0, sizeof(int)*slot);
                     memmove(rcvWindow, &rcvWindow[slot], sizeof(Segment)*(WIN_SIZE-slot));
                 }
             }
@@ -281,8 +275,8 @@ void list() {
         
         /* In ogni caso invio ACK */
         tmpIntBuff = strToInt(EMPTY);
-        lastSeqNumSend = lastSeqNumSend%maxSeqNum + 1;
-        newSegment(&sndSegment, FALSE, lastSeqNumSend, lastAckNumSend, FALSE, TRUE, FALSE, "1", 1, tmpIntBuff);
+        lastSeqNumSent = lastSeqNumSent%maxSeqNum + 1;
+        newSegment(&sndSegment, FALSE, lastSeqNumSent, lastAckNumSent, FALSE, TRUE, FALSE, "1", 1, tmpIntBuff);
         sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
         //wprintf(L"\n\nInvio pacchetto - (ackNum: %d)\n", atoi(sndSegment -> ackNum));
         free(tmpIntBuff);
@@ -299,8 +293,12 @@ void list() {
 void download(char *filename) {
 
     int *tmpIntBuff;
-    char *tmpStrBuff;
     int slot;
+    int totalSegsRcv = 0;
+    pthread_t tid;
+
+    // int totalSegs = WIN_SIZE;
+    int totalSegs = 11; // DA AGGIORNARE CON IL NUMERO RICEVUTO DAL SERVER NELL'ULTIMO SEG DELL'HANDSHAKE
 
     Segment *sndSegment = NULL;
     Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
@@ -310,7 +308,7 @@ void download(char *filename) {
         exit(-1);
     } 
 
-    memset(hashMapRcv, 0, WIN_SIZE*sizeof(int));
+    memset(rcvWinFlag, 0, WIN_SIZE*sizeof(int));
 
     /* Comando DOWNLOAD */
     tmpIntBuff = strToInt(filename);
@@ -318,76 +316,86 @@ void download(char *filename) {
     wprintf(L"Filename: %s - tmpIntBuff: %s - len: %d\n", filename, intToStr(sndSegment -> msg, atoi(sndSegment -> lenMsg)), strlen(filename));
     free(tmpIntBuff);
     sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
-    lastSeqNumSend = 0;
+    lastSeqNumSent = 0;
 
     sndWindow[0] = *sndSegment;
 
     /* Inizializzazione del primo pkt atteso */
-    lastAckNumSend = 1;
+    lastAckNumSent = 1;
 
     wprintf(L"Inizio ricezione file...\n");
-    FILE *wrFile = fopen(filename, "wb");
 
-    char b[1024];
-    getcwd(b, 1024);
-    wprintf(L"%s", b);
+    //
+    //
+    // DURANTE LA FASE DI HANDSHAKE DEL SERVER INVIARE DIMENSIONE E NOME ORIGINALE DEL FILE RICHIESTO
+    //
+    //
+    
+    /* Creazione di un thread utile alla fase di handshake */
+    if(pthread_create(&tid, NULL, thread_consumeSegment, (void *)filename) != 0)
+    {
+        printf("New consumeSegment thread error\n");
+        exit(-1);
+    }
+
+    // /* Stampa directory di esecuzione corrente */
+    // char b[1024];
+    // getcwd(b, 1024);
+    // wprintf(L"%s", b);    
 
     while(1) {
+        // /*********************** INIZIO RICEZIONE STUPIDA **************************************************************************/
+        // recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket);
+        // lastSeqNumRecv = atoi(rcvSegment -> seqNum);
+        // /* Pacchetto atteso */
+        // tmpStrBuff = intToStr(rcvSegment -> msg, atoi(rcvSegment -> lenMsg));
+        // wprintf(L"\nRicevuto pacchetto - (seqNum: %d) - (lenMsg: %d)\n", atoi(rcvSegment -> seqNum), atoi(rcvSegment -> lenMsg));
+        // cpOnFile(wrFile, tmpStrBuff, atoi(rcvSegment -> lenMsg));
+        // free(tmpStrBuff);
+        // lastAckNumSent = atoi(rcvSegment -> seqNum)%maxSeqNum + 1;
+        // /* In ogni caso invio ACK */
+        // lastSeqNumSent = lastSeqNumSent%maxSeqNum + 1;
+        // newSegment(&sndSegment, FALSE, lastSeqNumSent, lastAckNumSent, FALSE, TRUE, FALSE, "2", 1, tmpIntBuff);
+        // randomSendTo(sockfd, sndSegment, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
+        // wprintf(L"\n\nInvio ACK - (ackNum: %d)\n", atoi(sndSegment -> ackNum));
+        // if(atoi(rcvSegment -> eotBit) == 1) {
+        //     wprintf(L"\n\nHo ricevuto 'eotBit=1'\n");
+            
+        //     fclose(wrFile);
+        //     fin(TRUE);
+
+        //     break;
+        // }
+        // /*********************** FINE RICEZIONE STUPIDA ****************************************************************************/
 
         recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket);
         lastSeqNumRecv = atoi(rcvSegment -> seqNum);
         
-        /* Calcolo slot finestra e memorizzazione segmento ricevuto e aggiornamento hashMapRcv */
-        slot = winSlot(lastSeqNumRecv, lastAckNumSend);
+        /* Calcolo slot finestra e memorizzazione segmento ricevuto e aggiornamento rcvWinFlag */
+        slot = normalizeDistance(lastSeqNumRecv, lastAckNumSent);
 
-        //wprintf(L"\nRicevuto pacchetto - (seqNum: %d) - (slot: %d) - %d\n", atoi(rcvSegment -> seqNum), slot, hashMapRcv[0]);
+        wprintf(L"\nRicevuto pacchetto - (seqNum: %d) - (slot: %d) - %d\n", atoi(rcvSegment -> seqNum), slot, rcvWinFlag[0]);
+        wprintf(L"");
 
-        if(!((slot < 0) || (slot > WIN_SIZE-1))) {
-
+        /* Se il pacchetto ricevuto è valido e non duplicato, ovvero uno dei pacchetti attesi e non un pacchetto già riscontrato e copiato su disco */
+        pthread_mutex_lock(&consumeLock);
+        if(slot < WIN_SIZE && rcvWinFlag[slot] == 0) {
+            /* Bufferizzo il segmento appena ricevuto */
             rcvWindow[slot] = *rcvSegment;
-            hashMapRcv[slot] = 1;
+            rcvWinFlag[slot] = 1;
 
-            /* Pacchetto atteso */
-            if(slot == 0) {
-                
-                do {
-                    tmpStrBuff = intToStr(rcvWindow[slot].msg, atoi(rcvWindow[slot].lenMsg));
-                    cpOnFile(wrFile, tmpStrBuff, atoi(rcvWindow[slot].lenMsg));
-                    free(tmpStrBuff);
-                    slot++;
-                } while((slot != WIN_SIZE) && (hashMapRcv[slot] != 0));
-            
-                lastAckNumSend = atoi(rcvWindow[slot-1].seqNum)%maxSeqNum + 1;
-                
-                /* Shift finestra e hashMapRcv */
-                if(slot == WIN_SIZE) {
-                    memset(hashMapRcv, 0, sizeof(int)*WIN_SIZE);
-                }
-                else {
-                    memmove(hashMapRcv, &hashMapRcv[slot], sizeof(int)*(WIN_SIZE-slot));
-                    memset(&hashMapRcv[WIN_SIZE-slot], 0, sizeof(int)*slot);
-                    memmove(rcvWindow, &rcvWindow[slot], sizeof(Segment)*(WIN_SIZE-slot));
-                }
-            }
+            totalSegsRcv++;
         }
-        
-        /* In ogni caso invio ACK */
-        tmpIntBuff = strToInt(EMPTY);
-        lastSeqNumSend = lastSeqNumSend%maxSeqNum + 1;
-        newSegment(&sndSegment, FALSE, lastSeqNumSend, lastAckNumSend, FALSE, TRUE, FALSE, "1", 1, tmpIntBuff);
-        sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
-        //wprintf(L"\n\nInvio pacchetto - (ackNum: %d)\n", atoi(sndSegment -> ackNum));
-        free(tmpIntBuff);
+        pthread_mutex_unlock(&consumeLock);
 
-        if(atoi(rcvSegment -> eotBit) == 1 && allReceived()) {
+        if(totalSegsRcv == totalSegs) {
             break;
         }
     }
 
     free(sndSegment);
     free(rcvSegment);
-    
-    fclose(wrFile);
+    free(tmpIntBuff);
 }
 
 void cpOnFile(FILE *wrFile, char *content, int len) {       
@@ -396,15 +404,71 @@ void cpOnFile(FILE *wrFile, char *content, int len) {
     }
 }
 
+// DA TOGLIERE
 int allReceived() {
     int allPktReceived = 1;
     for(int i=0; i<WIN_SIZE; i++) {
-        if(hashMapRcv[i] != 0) {
+        if(rcvWinFlag[i] != 0) {
             allPktReceived = 0;
             break;
         }
     }
     return allPktReceived;
+}
+
+void *thread_consumeSegment(void *filename) {
+    int slot;
+    char *tmpStrBuff;
+    FILE *wrFile = fopen((char*)filename, "wb");
+
+    Segment *sndSegment = NULL;
+    int *tmpIntBuff = strToInt(EMPTY);
+
+    while(1) {
+        slot = 0;
+        /* Rimani fermo finchè il segmento atteso non è consumabile */
+        while(rcvWinFlag[slot] == 0);
+        pthread_mutex_lock(&consumeLock);
+        /* Consuma tutti i pacchetti in ordine fino al primo non disponibile */
+        do {
+            tmpStrBuff = intToStr(rcvWindow[slot].msg, atoi(rcvWindow[slot].lenMsg));
+            cpOnFile(wrFile, tmpStrBuff, atoi(rcvWindow[slot].lenMsg));
+            wprintf(L"\n\nScritto su file il segment con seqNum: %d\n", atoi(rcvWindow[slot].seqNum));
+            free(tmpStrBuff);
+            fflush(wrFile);
+
+            lastAckNumSent = lastAckNumSent%maxSeqNum + 1;
+            lastSeqNumSent = lastSeqNumSent%maxSeqNum + 1;
+            newSegment(&sndSegment, FALSE, lastSeqNumSent, lastAckNumSent, FALSE, TRUE, FALSE, "2", 1, tmpIntBuff);
+            sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
+            wprintf(L"Invio ACK - (ackNum: %d)\n", atoi(sndSegment -> ackNum));
+
+            rcvWinFlag[slot] = 0;
+
+            if(atoi(rcvWindow[slot].eotBit) == 1) {
+                fclose(wrFile);
+
+                memset(rcvWinFlag, 0, sizeof(int)*WIN_SIZE);
+
+                free(tmpIntBuff);
+                pthread_mutex_unlock(&consumeLock);
+                pthread_exit(0);
+            }
+
+            slot++;
+        } while(rcvWinFlag[slot] == 1 && slot < WIN_SIZE);        
+
+        /* Slide delle strutture di ricezione */
+        if(slot == WIN_SIZE) {
+            memset(rcvWinFlag, 0, sizeof(int)*WIN_SIZE);
+        } else {
+            memmove(rcvWindow, &rcvWindow[slot], sizeof(Segment)*(WIN_SIZE-slot));
+            memmove(rcvWinFlag, &rcvWinFlag[slot], sizeof(int)*(WIN_SIZE-slot));
+            memset(&rcvWinFlag[WIN_SIZE-slot], 0, sizeof(int)*slot);
+        }
+
+        pthread_mutex_unlock(&consumeLock);
+    }
 }
 
 void fin(char *isAck) {
@@ -414,7 +478,7 @@ void fin(char *isAck) {
     tmpIntBuff = strToInt(EMPTY);
     /* Creazione segmenti di invio/ricezione */
     Segment *sndSegment = NULL;
-    newSegment(&sndSegment, FALSE, 1, lastAckNumSend, FALSE, isAck, TRUE, EMPTY, 1, tmpIntBuff);
+    newSegment(&sndSegment, FALSE, 1, lastAckNumSent, FALSE, isAck, TRUE, EMPTY, 1, tmpIntBuff);
     free(tmpIntBuff);
 
     Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
@@ -432,18 +496,19 @@ void fin(char *isAck) {
         /* Ricezione ACK del FIN */
     } while(recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket) < 0);
 
+    wprintf(L"\n\n[FIN]: ACK del FIN ricevuto dal server\n");
+
     /* Ricezione FIN del Server */
     recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket);
 
-    /* FIN del Server ricevuto */
-    wprintf(L"[FIN-ACK]: Server information: (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
-    
+    wprintf(L"\n\n[FIN]: FIN del server ricevuto\n");
+
     /* Invio ACK del FIN del Server */
-    lastAckNumSend = atoi(rcvSegment -> seqNum)%maxSeqNum + 1;
+    lastAckNumSent = atoi(rcvSegment -> seqNum)%maxSeqNum + 1;
     tmpIntBuff = strToInt(EMPTY);
-    newSegment(&sndSegment, FALSE, 2, lastAckNumSend, FALSE, TRUE, FALSE, EMPTY, 1, tmpIntBuff);
+    newSegment(&sndSegment, FALSE, 2, lastAckNumSent, FALSE, TRUE, FALSE, EMPTY, 1, tmpIntBuff);
     sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
-    wprintf(L"[ACK-FIN]: Sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
+    wprintf(L"[FIN]: ACK del FIN inviato al server\n");
     wprintf(L"FIN terminated!\n\n");
 
     free(tmpIntBuff);

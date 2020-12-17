@@ -33,6 +33,7 @@ typedef struct _ThreadArgs {
 	struct sockaddr_in clientSocket;
 	Segment segment;
 	ClientNode *client;
+	/* var */
 } ThreadArgs;
 
 

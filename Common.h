@@ -1,20 +1,29 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+#include <pthread.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/time.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <errno.h>
+
 #define SOCKBUFLEN 64844	/* (1500+8)*43 = (MSS+HEADER_UDP)*MAX_WIN_SIZE */
 
-#define LOSS_PROB 30  		/* Probabiltà di perdita */
-#define WIN_SIZE 5			/* Dimensione finestra */
+#define LOSS_PROB 0  		/* Probabiltà di perdita */
+#define WIN_SIZE 3			/* Dimensione finestra */
 
-/* Dimensione campo Seq/Ack 11 perchè il massimo valore rappresentabile
-   in TCP è (2^16)-1 = 4294967295, quindi 10 caratteri + '\0'*/
-// Provare 2**16 pow(2,16) per elevare 2 alla 16
-#define MAX_SEQ_ACK_NUM 11
 #define BIT 2
 #define CMD 2
 #define WIN 3				/* La massima finestra sarà "43" (65536/1500 = (MAX_WIN_SIZE in byte)/MSS), ovvero 2 caratteri + '\0' */
 #define BYTE_MSG 5
-#define LEN_MSG 200		/* MSS-(lunghezza di tutti i campi) = 1460 byte rimanenti*/
+#define LEN_MSG 100		/* MSS-(lunghezza di tutti i campi) = 1460 byte rimanenti*/
 
 /**/
 #define TRUE "1"
@@ -23,12 +32,11 @@
 
 typedef struct sockaddr_in Sockaddr_in;
 
-typedef struct _Segment
-{
+typedef struct _Segment {
 	char eotBit[BIT];				/* End Of Transmission Bit: posto ad 1 se l'operazione (download/upload/list)
 									   è conclusa con successo, 0 altrimenti */
-	char seqNum[MAX_SEQ_ACK_NUM];	/* Numero di sequenza del client/server */
-	char ackNum[MAX_SEQ_ACK_NUM];	/* Ack del segmento ricevuto */
+	char seqNum[WIN];				/* Numero di sequenza del client/server */
+	char ackNum[WIN];				/* Ack del segmento ricevuto */
 	
 	char synBit[BIT];          
 	char ackBit[BIT];
@@ -40,6 +48,14 @@ typedef struct _Segment
 	char lenMsg[BYTE_MSG];			/* Lunghezza, in byte, del campo msg */
 	int msg[LEN_MSG];				/* Contenuto del messaggio */
 } Segment;
+
+typedef struct _SegQueue {
+	Segment segment;
+	int winPos;
+
+	struct _SegQueue *next;
+	// struct _SegQueue *prev;
+} SegQueue;
 
 void newSegment(Segment **segment, char *eotBit, int seqNum, int ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, int *msg);
 Segment* mallocSegment(char *eotBit, int seqNum, int ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, int *msg);
@@ -98,6 +114,66 @@ Segment* mallocSegment(char *eotBit, int seqNum, int ackNum, char *synBit, char 
 	}
 
 	return segment;
+}
+
+SegQueue* newSegQueue(Segment segment, int winPos) {
+	SegQueue *segQueue = malloc(sizeof(SegQueue));
+	if(segQueue != NULL) {
+		segQueue -> segment = segment;
+		segQueue -> winPos = winPos;
+
+		segQueue -> next = NULL;
+		// segQueue -> prev = NULL;
+	} else {
+		printf("Error while trying to \"malloc\" a new segQueue (SeqNum: %d)!\nClosing...\n", atoi(segment.seqNum));
+		exit(-1);
+	}
+
+	return segQueue;
+}
+
+void appendSegToQueue(SegQueue **queueHead, Segment segment, int winPos) {
+	if(*queueHead == NULL) {
+		*queueHead = newSegQueue(segment, winPos);
+	} else {
+		SegQueue *current = *queueHead;
+
+		while(current -> next != NULL) {
+			if((current -> segment).seqNum == segment.seqNum)
+				return;
+			current = current -> next;
+		}
+
+		current -> next = newSegQueue(segment, winPos);
+		// (current -> next) -> prev = current;
+	}
+}
+
+void deleteSegFromQueue(SegQueue **queueHead, SegQueue *segment) {
+	SegQueue *current, *prev;
+	current = *queueHead;
+
+	/* Se segment è in testa */
+	if(current == segment) {
+		/* Se è l'unico elemento della coda */
+		if(current -> next == NULL) {
+			free(segment);
+			*queueHead = NULL;
+		} else {
+			prev = current;
+			*queueHead = current -> next;
+			free(prev);
+		}
+	} else {
+		prev = current;
+		while(current != segment) {
+			prev = current;
+			current = current -> next;
+		}
+
+		prev -> next = current -> next;
+		free(current);
+	}
 }
 
 /* Conversione intera stringa in minuscolo */
@@ -392,12 +468,76 @@ int sup(int dividend, int divisor) {
 	return ((dividend-1)/divisor)+1;
 }
 
-int winSlot(int lastSeqNumRcv, int lastAckedSeqNum) {	
+int rcvWinSlot(int lastSeqNumRcv, int lastAckedSeqNum) {	
 	return (lastSeqNumRcv - lastAckedSeqNum);
 }
 
 void slideWin() {
 
+}
+
+double elapsedTime(struct timeval prevTime) {
+	// struct timeval t1, t2;
+ //    double elapsedTime;
+
+ //    // start timer
+ //    gettimeofday(&t1, NULL);
+
+ //    usleep(150000);
+
+ //    // stop timer
+ //    gettimeofday(&t2, NULL);
+
+ //    // compute and print the elapsed time in millisec
+ //    elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000;      // sec to ms
+ //    elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
+ //    printf("%.3f\n", elapsedTime);
+
+	struct timeval currentTime;
+    double elapsedTime;
+
+    // start timer
+    gettimeofday(&currentTime, NULL);
+
+    // compute and print the elapsed time in millisec
+    elapsedTime = (currentTime.tv_sec - prevTime.tv_sec) * 1000;      // da secondi a ms
+    elapsedTime += (currentTime.tv_usec - prevTime.tv_usec) / 1000.0;   // da microsecondi a ms
+    //printf("%.3f\n", elapsedTime);
+
+    return elapsedTime;
+}
+
+int normalize(int num1, int num2) {
+	if((num1 - num2) <= 0)
+		return num1-num2+(WIN_SIZE*2);
+	else
+		return num1-num2;
+}
+
+int normalizeDistance(int num1, int num2) {
+	if((num1 - num2) < 0)
+		return num1-num2+(WIN_SIZE*2);
+	else
+		return num1-num2;
+}
+
+int isSeqMinor(int rcvAck, int seqNum, int distance) {
+	int check;
+	for(int i = -1; i < distance; i++) {
+		check = (rcvAck+i)%(WIN_SIZE*2) + 1;
+
+		if(seqNum == check)
+			return 0;
+    }
+    return 1;
+}
+
+int randomSendTo(int sockfd, Segment *segment, struct sockaddr *socketInfo, int addrlenSocketInfo) {
+    if((rand()%100 + 1) > LOSS_PROB) {
+        sendto(sockfd, segment, sizeof(*segment), 0, socketInfo, addrlenSocketInfo);
+        return 1;
+    }
+    return 0;
 }
 
 #endif
