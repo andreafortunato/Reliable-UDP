@@ -16,14 +16,14 @@
 
 #define SOCKBUFLEN 64844	/* (1500+8)*43 = (MSS+HEADER_UDP)*MAX_WIN_SIZE */
 
-#define LOSS_PROB 0  		/* Probabiltà di perdita */
-#define WIN_SIZE 3			/* Dimensione finestra */
+#define LOSS_PROB 60  		/* Probabiltà di perdita */
+#define WIN_SIZE 10			/* Dimensione finestra */
 
 #define BIT 2
 #define CMD 2
-#define WIN 3				/* La massima finestra sarà "43" (65536/1500 = (MAX_WIN_SIZE in byte)/MSS), ovvero 2 caratteri + '\0' */
-#define BYTE_MSG 5
-#define LEN_MSG 100		/* MSS-(lunghezza di tutti i campi) = 1460 byte rimanenti*/
+#define WIN 11				/* Numero di cifre incluso \0 rappresentanti la dimensione della finestra */
+#define BYTE_MSG 5			/* Numero di cifre incluso \0 della lunghezza del messaggio LEN_MSG */
+#define LEN_MSG 4048		/* (4048) (6500) */
 
 /**/
 #define TRUE "1"
@@ -56,6 +56,11 @@ typedef struct _SegQueue {
 	struct _SegQueue *next;
 	// struct _SegQueue *prev;
 } SegQueue;
+
+typedef struct _RTT_Data {
+	double sRTT;
+	double varRTT;
+} RTT_Data;
 
 void newSegment(Segment **segment, char *eotBit, int seqNum, int ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, int *msg);
 Segment* mallocSegment(char *eotBit, int seqNum, int ackNum, char *synBit, char *ackBit, char *finBit, char *cmdType, int lenMsg, int *msg);
@@ -175,6 +180,20 @@ void deleteSegFromQueue(SegQueue **queueHead, SegQueue *segment) {
 		free(current);
 	}
 }
+
+RTT_Data* initData() {
+
+	RTT_Data *rttData = malloc(sizeof(RTT_Data));
+	if(rttData != NULL) {
+		rttData -> sRTT = -1;
+		rttData -> varRTT = 0;
+	} else {
+		printf("Error while trying to \"malloc\" a new rttData!\nClosing...\n");
+		exit(-1);
+	}
+
+	return rttData;
+} 
 
 /* Conversione intera stringa in minuscolo */
 char *tolowerString(char *string)
@@ -507,6 +526,27 @@ double elapsedTime(struct timeval prevTime) {
     return elapsedTime;
 }
 
+double calculateRTO(struct timeval sendTime, RTT_Data *rttData) {
+
+	double RTT = 0;
+	double RTO;
+
+	if(rttData -> sRTT == -1) {
+		rttData -> sRTT = elapsedTime(sendTime);
+	}
+	else {
+		RTT = elapsedTime(sendTime);
+		rttData -> sRTT = (0.875*rttData -> sRTT) + (RTT*0.125);    					 // sRTT = (1-alpha)*sRTT + aplha*RTT, alpha = 0.125 = 1/8
+		rttData -> varRTT = (0.75*rttData -> varRTT) + ((RTT-rttData -> sRTT) < 0 ? (rttData->sRTT - RTT):(RTT-rttData->sRTT ))*0.25; // varRTT = (1-beta)*varRTT + beta*|RTT - sRTT|, beta = 0.25 = 1/4
+	}
+
+	//printf("\nRTT: %.3f, sRTT: %.3f, varRTT: %.3f, RTO: %.3f\n", RTT, rttData->sRTT, rttData->varRTT, rttData -> sRTT + (rttData -> varRTT*4));
+
+	RTO = rttData -> sRTT + (rttData -> varRTT*4);	// RTO = sRTT + 4*varRTT
+
+	return RTO > 60000 ? 60000 : (RTO < 1000 ? 1000 : RTO);
+}
+
 int normalize(int num1, int num2) {
 	if((num1 - num2) <= 0)
 		return num1-num2+(WIN_SIZE*2);
@@ -520,7 +560,7 @@ int normalizeDistance(int num1, int num2) {
 	else
 		return num1-num2;
 }
-
+					
 int isSeqMinor(int rcvAck, int seqNum, int distance) {
 	int check;
 	for(int i = -1; i < distance; i++) {
@@ -531,9 +571,76 @@ int isSeqMinor(int rcvAck, int seqNum, int distance) {
     }
     return 1;
 }
+									
+void orderedInsertSegToQueue(SegQueue **queueHead, Segment segment, int winPos, int maxSeqNumSendable) {
+
+	//printf("Sto inserendo: %d\n", atoi(segment.seqNum));
+
+	/*
+	SegQueue *node = *queueHead;
+	while(node != NULL) {
+
+		printf("%d -> ", atoi((node -> segment).seqNum));
+
+		node = node -> next;
+	}
+
+	printf("NULL\n");
+	*/
+
+	if(*queueHead == NULL) {
+		*queueHead = newSegQueue(segment, winPos);
+	} else {
+		int distance;
+		SegQueue *current = *queueHead;
+		SegQueue *prev = current;
+
+		while(current != NULL) {
+
+			distance = normalizeDistance(maxSeqNumSendable, atoi((current -> segment).seqNum));
+			if(isSeqMinor(atoi((current -> segment).seqNum), atoi(segment.seqNum), distance)) {
+				
+				if(current == *queueHead) {
+					*queueHead = newSegQueue(segment, winPos);
+					(*queueHead) -> next = current;
+
+					/*
+					node = *queueHead;
+					while(node != NULL) {
+						printf("%d -> ", atoi((node -> segment).seqNum));
+						node = node -> next;
+					}
+
+					printf("NULL\n");
+					*/
+
+					return;
+				}
+				
+				break;
+	        }
+	        prev = current;
+			current = current -> next; 
+		}
+
+		prev -> next = newSegQueue(segment, winPos);
+		prev -> next -> next = current;
+	}
+
+	/*
+	node = *queueHead;
+	while(node != NULL) {
+		printf("%d -> ", atoi((node -> segment).seqNum));
+		node = node -> next;
+	}
+
+	printf("NULL\n");
+	*/
+}
 
 int randomSendTo(int sockfd, Segment *segment, struct sockaddr *socketInfo, int addrlenSocketInfo) {
-    if((rand()%100 + 1) > LOSS_PROB) {
+	int sendProb = 1 + (rand()/(float)(RAND_MAX)) * 99; // 99 = 100 - 1
+    if(sendProb > LOSS_PROB) {
         sendto(sockfd, segment, sizeof(*segment), 0, socketInfo, addrlenSocketInfo);
         return 1;
     }

@@ -18,7 +18,7 @@ void makeClientMenu()
 	wchar_t down = 0x2584;			/* ▄ */
 	wchar_t downdx = 0x259f;		/* ▟ */
 	wchar_t u_grave = 0x00d9;		/* Ù */
-	wprintf(L"%lc", upsx);
+	wprintf(L"\n%lc", upsx);
 	for(int i = 0; i < 47; i++)
 		wprintf(L"%lc", up);
 	wprintf(L"%lc\n%lc\t\t      \033[1mMEN%lc\033[0m\t\t\t%lc\n%lc", updx, sx, u_grave, dx, sx); /* 1;5m = Grassetto;Intermittenza, 0m = Reset */

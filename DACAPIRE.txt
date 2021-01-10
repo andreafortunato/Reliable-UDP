@@ -36,3 +36,18 @@ msg: 101->120
 
 
 ((lastByteRcv - lastAckByteRcv)/(LEN_MSG))-1; 
+
+
+CALCOLO RTT:
+
+	sRTT = (1-alpha)*sRTT + aplha*RTT, alpha = 0.125 = 1/8
+
+	varRTT = (1-beta)*varRTT + beta*|RTT - sRTT|, beta = 0.25 = 1/4
+
+	RTO = sRTT + 4*varRTT
+
+FIRST MEASUREMENT:
+	RTT_STIMATO = RTT_APPENA_CAMPIONATO
+	DEV_RTT = RTT_APPENA_CAMPIONATO/2
+	RTO = SRTT + max(G, K*DEV_RTT)
+		where K = 4;

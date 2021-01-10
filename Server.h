@@ -284,8 +284,9 @@ char** getFileNameList(char *serverFileName, int *numFiles) {
 
 /* Ritorna in 'fileList' la lista dei file nella directory del server
    escluse le cartelle ed il file eseguibile del server */
-int fileExist(char **fileNameList, char *clientFileName, int numFiles) {
+char *fileExist(char **fileNameList, char *clientFileName, int numFiles) {
 
+	char *originalFilename = NULL;
 	char fileToSearch[strlen(clientFileName)+1];
 	strcpy(fileToSearch, clientFileName);
 	char *str1;
@@ -295,14 +296,19 @@ int fileExist(char **fileNameList, char *clientFileName, int numFiles) {
 	for(int i=0; i < numFiles; i++) {
 		str1 = tolowerString(fileNameList[i]);
 		if(strcmp(str1, str2) == 0) {
-    		return 1;
+			originalFilename = malloc(strlen(fileNameList[i]));
+			strcpy(originalFilename, fileNameList[i]);
+			originalFilename[strlen(originalFilename)-1] = '\0';
+			printf("HO COPIATO IN ORIGINALFILENAME: %s, LEN: %ld\n\n", originalFilename, strlen(originalFilename));
+			free(str1);
+			break;
 		}
 		bzero(str1, strlen(str1));
 		free(str1);
 	}
 
 	free(str2);
-    return 0;
+    return originalFilename;
 }
 
 /* Restituisce un lista dei file in formato stringa per il client */
