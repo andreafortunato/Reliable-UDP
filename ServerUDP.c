@@ -2,6 +2,10 @@
 
 // Server - FTP on UDP 
 
+//////////////////////////////////////////////////////////////////////////
+// sha256sum -z cuore.png | cut -d " " -f 1 --> d92d0c0bd9977bdfe8941302ddc6ab940aa2958e6bc9156937d5f25c8a6e781c
+//////////////////////////////////////////////////////////////////////////
+
 #include <time.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -29,7 +33,7 @@ void *continuous_recv_thread(void *);
 
 
 /* Variabili globali */
-pthread_rwlock_t lockList;                  /* Semaforo Read/Write necessario per la gestione degli accessi alla lista */
+pthread_mutex_t lockList;                  /* Semaforo Read/Write necessario per la gestione degli accessi alla lista */
 int syncFlag;
 int debug = 0;                              /* Se l'utente ha avviato in modalità debug, verranno mostrate informazioni aggiuntive */
 
@@ -64,9 +68,6 @@ ClientNode *clientThread;
 int addrlenClientThread;
 Sockaddr_in clientSocketThread;
 
-/* DA ELIMINARE */
-struct timeval DA_ELIMINARE;
-
 // Main - Server 
 int main(int argc, char *argv[])
 {
@@ -79,7 +80,7 @@ int main(int argc, char *argv[])
     //signal(SIGINT, ctrl_c_handler);
 
     /* Inizializzazione semaforo R/W */
-    if(pthread_rwlock_init(&lockList, NULL) != 0) {
+    if(pthread_mutex_init(&lockList, NULL) != 0) {
         printf("Failed semaphore initialization.\n");
         exit(-1);
     }
@@ -102,6 +103,8 @@ int main(int argc, char *argv[])
     int ret;            /*  */
 
     pthread_t tid;      /*  */
+
+    ClientNode *checkClient; 
 
     /* Sockaddr_in server */
     Sockaddr_in serverSocket;
@@ -142,7 +145,7 @@ int main(int argc, char *argv[])
 
     /* Assegnazione dell'indirizzo locale alla socket */
     if (bind(mainSockFd, (struct sockaddr*)&serverSocket, addrlenServer) == 0) {
-        printf("\nServer online...\n\n");
+        printf("\nServer online... - PID: %d\n\n", getpid());
     }
     else {
         printf("\nBinding Failed!\n");
@@ -155,13 +158,33 @@ int main(int argc, char *argv[])
         bzero(rcvSegment, sizeof(Segment));
         bzero(threadArgs, sizeof(ThreadArgs));
 
-        /* Controllo che il segmento ricevuto sia di syn */
+        /* Controllo che il segmento ricevuto sia di syn, in caso negativo ignoro il segmento e ne attendo un altro */
         recvSegment(mainSockFd, rcvSegment, &clientSocket, &addrlenClient);
         if(atoi(rcvSegment -> synBit) != 1) {
             continue;
         }
 
-        printf("\n[PKT-MAIN]: Received packet from (%s:%d)\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+        /* Controllo se il client ha già effettuato una richiesta di SYN: in caso affermativo,
+           cancello l'handshake_thread precedentemente associato e lo ricreo */
+        pthread_mutex_lock(&lockList);
+        checkClient = clientList;
+        while(checkClient != NULL) {
+            if(strcmp(checkClient->ip, inet_ntoa(clientSocket.sin_addr)) == 0 || checkClient->clientPort == ntohs(clientSocket.sin_port))
+                break;
+            else
+                checkClient = checkClient -> next;
+        }
+        if (checkClient != NULL) {
+            printf("Il client (%s:%d) era già connesso, lo termino\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+            pthread_cancel(checkClient -> tid);
+            pthread_join(checkClient -> tid, NULL);
+
+            close(checkClient -> sockfd);
+            deleteClientNode(&clientList, checkClient, &clientListSize, &maxSockFd);
+        }
+        pthread_mutex_unlock(&lockList);
+
+        printf("\n[PKT-MAIN]: Client (%s:%d) is trying to connect\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
         
         /* Creazione di un thread utile alla fase di handshake */
         syncFlag = 0;
@@ -172,13 +195,13 @@ int main(int argc, char *argv[])
             printf("New client thread error\n");
             exit(-1);
         }
-
+        
         /* Attesa dell'aggiunta del nuovo client */
         while(syncFlag == 0);
     } 
 
     /* Distruzione semaforo R/W */
-    if(pthread_rwlock_destroy(&lockList) != 0) {
+    if(pthread_mutex_destroy(&lockList) != 0) {
         printf("Failed semaphore destruction.\n");
         exit(-1);
     }
@@ -236,7 +259,7 @@ void *client_thread_handshake(void *args)
     clientSocket = threadArgs.clientSocket;
     int addrlenClient = sizeof(clientSocket);
 
-    printf("\n[TEST]: threadArgs for client handshake (%s:%d)!\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+    printf("\n[TEST - %ld]: threadArgs for client handshake (%s:%d)!\n", pthread_self(), inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
 
     /* Sockaddr_in server */
     Sockaddr_in serverSocket;
@@ -258,31 +281,30 @@ void *client_thread_handshake(void *args)
     
     /* Aggiunta alla lista dei client sul server del client appena connesso */
     ClientNode *newClient = newNode(clientSockFd, inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port), clientSocket, pthread_self(), ntohs(serverSocket.sin_port), (threadArgs.segment).seqNum); 
-    pthread_rwlock_wrlock(&lockList);
+    pthread_mutex_lock(&lockList);
     addClientNode(&clientList, newClient, &clientListSize, &maxSockFd);
     /*
     printf("New Client\n");
-        if(newClient->prev)
-            printf("Prev: %d\n", newClient->prev->clientPort);
+        if(newClient -> prev)
+            printf("Prev: %d\n", newClient -> prev->clientPort);
         else
             printf("Prev: NULL\n");
 
-        printf("Sockfd: %d\nIP: %s\nPort: %d\n", newClient->sockfd, newClient->ip, newClient->clientPort);
+        printf("Sockfd: %d\nIP: %s\nPort: %d\n", newClient -> sockfd, newClient -> ip, newClient -> clientPort);
         
-        if(newClient->next)
-            printf("Next: %d\n", newClient->next->clientPort);
+        if(newClient -> next)
+            printf("Next: %d\n", newClient -> next->clientPort);
         else
             printf("Next: NULL\n");
     */
-    pthread_rwlock_unlock(&lockList);
+    pthread_mutex_unlock(&lockList);
 
-    /* SYN-ACK */
+    /* Generazione segmento SYN-ACK */
     tmpIntBuff = strToInt(EMPTY);
     Segment *synAck = NULL;
     newSegment(&synAck, FALSE, 1, atoi((threadArgs.segment).seqNum) + 1, TRUE, TRUE, FALSE, EMPTY, 1, tmpIntBuff);
     free(tmpIntBuff);
 
-    /* ACK del SYN-ACK */
     Segment *rcvSegment = (Segment*) malloc(sizeof(Segment));
     if(rcvSegment == NULL)
     {
@@ -302,58 +324,103 @@ void *client_thread_handshake(void *args)
 
     gettimeofday(&synTimeout, NULL);
 
-    /* Invio SYN-ACK */
-    randomSendTo(clientSockFd, synAck, (struct sockaddr*)&clientSocket, addrlenClient);
+    sendto(clientSockFd, synAck, sizeof(Segment), 0, (struct sockaddr*)&clientSocket, addrlenClient);
     printf("SYN-ACK sent to the client (%s:%d)\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+    // /* Invio SYN-ACK */
+    // if(randomSendTo(clientSockFd, synAck, (struct sockaddr*)&clientSocket, addrlenClient))
+    //     printf("SYN-ACK sent to the client (%s:%d)\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+    // else
+    //     printf("SYN-ACK LOST\n");
     free(synAck);
 
-    /* Attesa ricezione dell'ack del syn-ack per un massimo di 30 secondi */
+    /* Attesa ricezione dell'ack del syn-ack per un massimo di 30 secondi, dopodichè
+       chiusura della connessione verso quel client */
     while(1) {
-
         if(elapsedTime(synTimeout) > 30*1000) {
             free(rcvSegment);
+            printf("[SYN] Client %s:%d is dead.\n", inet_ntoa(clientSocket.sin_addr), ntohs(clientSocket.sin_port));
+
+            close(newClient -> sockfd);
+
+            pthread_mutex_lock(&lockList);
             deleteClientNode(&clientList, newClient, &clientListSize, &maxSockFd);
+            pthread_mutex_unlock(&lockList);
+
             pthread_exit(NULL);
         }
 
-        if(recvSegment(clientSockFd, rcvSegment, &clientSocket, &addrlenClient) >= 0 && atoi(rcvSegment -> ackBit) != 1) 
+        /* Controllo che il segmento ricevuto sia un ACK (oppure ACK+operazione), in caso
+           negativo ignoro il segmento e ne attendo un altro */
+        if(recvSegment(clientSockFd, rcvSegment, &clientSocket, &addrlenClient) < 0 || atoi(rcvSegment -> ackBit) != 1) 
             continue;
 
-        synTimeout.tv_usec = 0;
-        synTimeout.tv_sec = 0;
-        if (setsockopt(clientSockFd, SOL_SOCKET, SO_RCVTIMEO, &synTimeout, sizeof(synTimeout)) < 0) {
-            printf("\nError while setting syn-ack-timeout");
-            exit(-1);
-        }
+        printf("\n[SYN] -> Ricevuta richiesta operazione: %d\n", atoi(rcvSegment -> cmdType));
 
         break;       
     }
 
-    /////////////// DA ELIMINARE ///////////////////
-	newClient -> lastSeqServer = 1;
-    ///////////////////////////////////////////////
+    printf("WHILE SUPERATO\n");
 
-    tmpStrBuff = intToStr(rcvSegment -> msg, atoi(rcvSegment -> lenMsg)); 
+    /* Imposto un timeout di 30 secondi per la ricezione della richiesta di operazione da parte del client */
+    synTimeout.tv_usec = 0;
+    synTimeout.tv_sec = 30;
+    if (setsockopt(clientSockFd, SOL_SOCKET, SO_RCVTIMEO, &synTimeout, sizeof(synTimeout)) < 0) {
+            printf("\nError while setting syn-ack-timeout");
+            exit(-1);
+    }
 
-    if(strcmp(tmpStrBuff, EMPTY) == 0) {
-        recvSegment(clientSockFd, rcvSegment, &clientSocket, &addrlenClient); /** Ricezione ACK+Operazione */
-        switch(atoi(rcvSegment -> cmdType)) {
+    /* Se il pacchetto ricevuto è l'ACK del SYN-ACK, attendo il prossimo per la richiesta di operazione */
+    if(strcmp(rcvSegment -> cmdType, EMPTY) == 0) {
+        if(recvSegment(clientSockFd, rcvSegment, &clientSocket, &addrlenClient) < 0) { /* Ricezione operazione */
+            synTimeout.tv_usec = 0;
+            synTimeout.tv_sec = 0;
+            if (setsockopt(clientSockFd, SOL_SOCKET, SO_RCVTIMEO, &synTimeout, sizeof(synTimeout)) < 0) {
+                printf("\nError while setting syn-ack-timeout");
+                exit(-1);
+            }
 
-            case 1:
-                list(newClient);
-                break;
+            close(newClient -> sockfd);
 
-            case 2:
-                tmpStrBuff = intToStr(rcvSegment -> msg, atoi(rcvSegment -> lenMsg));
-                printf("FILE RICHIESTO (%s)\n", tmpStrBuff);
-                download(newClient, tmpStrBuff);
-                free(tmpStrBuff);
-                break;
+            pthread_mutex_lock(&lockList);
+            deleteClientNode(&clientList, newClient, &clientListSize, &maxSockFd);
+            pthread_mutex_unlock(&lockList);
 
-            case 3:
-                break; 
+            free(rcvSegment);
 
+            pthread_exit(NULL);
         }
+    }
+
+
+    /* Reset del timeout per la recvfrom */
+    synTimeout.tv_usec = 0;
+    synTimeout.tv_sec = 0;
+    if (setsockopt(clientSockFd, SOL_SOCKET, SO_RCVTIMEO, &synTimeout, sizeof(synTimeout)) < 0) {
+        printf("\nError while setting syn-ack-timeout");
+        exit(-1);
+    }
+
+    /* Switch operazioni richieste dal client */
+    switch(atoi(rcvSegment -> cmdType)) {
+
+        case 1:
+            list(newClient);
+            break;
+
+        case 2:
+            tmpStrBuff = intToStr(rcvSegment -> msg, atoi(rcvSegment -> lenMsg));
+            printf("FILE RICHIESTO (%s)\n", tmpStrBuff);
+            download(newClient, tmpStrBuff);
+            free(tmpStrBuff);
+            break;
+
+        case 3:
+            break;
+
+        default:
+
+            break;
+
     }
 
     free(rcvSegment);
@@ -419,18 +486,18 @@ void list(ClientNode *client) {
 /* Funzione download */
 void download(ClientNode *client, char *fileName)
 {   
-    char *originalFilename = fileExist(fileNameList, fileName, numFiles);
-    printf("FILE SUL SERVER: %s\n", originalFilename);
+    char *originalFileName = fileExist(fileNameList, fileName, numFiles);
+    printf("FILE SUL SERVER: %s\n", originalFileName);
 
     /* Se il file è presente nel server */
-    if(originalFilename != NULL) {
+    if(originalFileName != NULL) {
 
         int ret;
     	pthread_t uselessTid;
     	Segment *sndSegment = NULL;
 
         /* Apertura del file richiesto dal client */
-        FILE *file = fopen(originalFilename, "rb");
+        FILE *file = fopen(originalFileName, "rb");
 
         // char b[1024];
         // getcwd(b, 1024);
@@ -494,8 +561,10 @@ void download(ClientNode *client, char *fileName)
         /* Caricamento del primo pacchetto contenente \bTOTALSEGS\bNOME\b */  
         char tmpStrBuff[LEN_MSG];
         int *tmpIntBuff;
+        char *fileSHA256 = getFileSHA256(originalFileName);
 
-        sprintf(tmpStrBuff, "\b%d\b%s\b%d\b", totalSegs+1, originalFilename, fileLen);
+
+        sprintf(tmpStrBuff, "\b%d\b%s\b%d\b%s\b", totalSegs+1, originalFileName, fileLen, fileSHA256);
         tmpIntBuff = strToInt(tmpStrBuff);
         newSegment(&sndSegment, FALSE, 1, -1, FALSE, FALSE, FALSE, "2", strlen(tmpStrBuff), tmpIntBuff);
 
@@ -514,6 +583,7 @@ void download(ClientNode *client, char *fileName)
                 if((ch = fgetc(file)) == EOF)
                     break;
                 buffFile[j-1] = htonl(ch);
+                //buffFile[j-1] = htonl(ch)*2; // Per controllare che l'SHA256 calcolato dal client sia diverso
             }
 
             /* Se è l'ultimo segmento imposta End-Of-Transmission-Bit a 1 */
@@ -898,6 +968,11 @@ void fin(ClientNode *client) {
 
     free(tmpIntBuff);
 
+    close(client -> sockfd);
+
+    pthread_mutex_lock(&lockList);
     deleteClientNode(&clientList, client, &clientListSize, &maxSockFd);
+    pthread_mutex_unlock(&lockList);
+
     printf("\nTrasmissione terminata e disconnessione effettuata con successo!\n");
 }

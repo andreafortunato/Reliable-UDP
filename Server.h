@@ -299,7 +299,7 @@ char *fileExist(char **fileNameList, char *clientFileName, int numFiles) {
 			originalFilename = malloc(strlen(fileNameList[i]));
 			strcpy(originalFilename, fileNameList[i]);
 			originalFilename[strlen(originalFilename)-1] = '\0';
-			printf("HO COPIATO IN ORIGINALFILENAME: %s, LEN: %ld\n\n", originalFilename, strlen(originalFilename));
+			//printf("HO COPIATO IN ORIGINALFILENAME: %s, LEN: %ld\n\n", originalFilename, strlen(originalFilename));
 			free(str1);
 			break;
 		}

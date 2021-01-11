@@ -30,6 +30,7 @@ int totalSegs;
 int totalBytes;
 int canSendAck;
 struct timeval tvDownloadTime;
+char originalFileSHA256[65];
 
 Segment sndWindow[WIN_SIZE];
 int sndWinFlag[WIN_SIZE];
@@ -121,6 +122,7 @@ int main(int argc, char *argv[])
 
     while (1) {
         //system("clear");
+        wprintf(L"\n\nPID: %d", getpid());
         choice = clientChoice();
 
         switch(choice) {
@@ -227,14 +229,24 @@ int handshake() {
             exit(-1);
         }
 
-        /* Invio SYN */
-        randomSendTo(sockfd, sndSegment, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket);
+        sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket);
         wprintf(L"\n[SYN]: Sent to the server (%s:%d)\n", inet_ntoa(mainServerSocket.sin_addr), ntohs(mainServerSocket.sin_port));
+        // /* Invio SYN */
+        // if(randomSendTo(sockfd, sndSegment, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket))
+        //     wprintf(L"\n[SYN]: Sent to the server (%s:%d)\n", inet_ntoa(mainServerSocket.sin_addr), ntohs(mainServerSocket.sin_port));
+        // else
+        //     wprintf(L"\n[SYN]: LOST\n");
 
         countRetransmission += 1;
 
         /* Ricezione SYN-ACK */
     } while(recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket) < 0 || atoi(rcvSegment -> synBit) != 1 || atoi(rcvSegment -> ackBit) != 1);
+
+    synTimeout.tv_sec = 0;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &synTimeout, sizeof(synTimeout)) < 0) {
+        wprintf(L"\nError while setting syn-timeout at try n°: %d\n", countRetransmission);
+        exit(-1);
+    }
 
     /* SYN-ACK ricevuto */
     wprintf(L"[SYN-ACK]: Server information: (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
@@ -244,8 +256,13 @@ int handshake() {
     tmpIntBuff = strToInt(EMPTY);
     newSegment(&sndSegment, FALSE, 2, ackNum, FALSE, TRUE, FALSE, EMPTY, 1, tmpIntBuff);
     free(tmpIntBuff);
-    randomSendTo(sockfd, sndSegment, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
-    wprintf(L"[ACK]: Sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
+    
+    // sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
+    // wprintf(L"[ACK]: Sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
+    // if(randomSendTo(sockfd, sndSegment, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket))
+    //     wprintf(L"[ACK]: Sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
+    // else
+    //     wprintf(L"\n[ACK]: LOST\n");
     
     /* Fine handshake */
     wprintf(L"Handshake terminated!\n\n");
@@ -271,7 +288,7 @@ void list() {
 
     /* Comando LIST */
     tmpIntBuff = strToInt(EMPTY);
-    newSegment(&sndSegment, FALSE, 1, -1, FALSE, FALSE, FALSE, "1", 1, tmpIntBuff);
+    newSegment(&sndSegment, FALSE, 1, -1, FALSE, TRUE, FALSE, "1", 1, tmpIntBuff);
     free(tmpIntBuff);
     sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
     lastSeqNumSent = 0;
@@ -362,7 +379,7 @@ void download(char *filename) {
 
     /* Comando DOWNLOAD */
     tmpIntBuff = strToInt(filename);
-    newSegment(&sndSegment, FALSE, 1, -1, FALSE, FALSE, FALSE, "2", strlen(filename), tmpIntBuff);
+    newSegment(&sndSegment, FALSE, 1, -1, FALSE, TRUE, FALSE, "2", strlen(filename), tmpIntBuff);
     wprintf(L"Filename: %s - tmpIntBuff: %s - len: %d\n", filename, intToStr(sndSegment -> msg, atoi(sndSegment -> lenMsg)), strlen(filename));
     free(tmpIntBuff);
     sendto(sockfd, sndSegment, sizeof(Segment), 0, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket);
@@ -408,10 +425,15 @@ void download(char *filename) {
 
             tmpStr = strtok(NULL, "\b");
             strcpy(filename, tmpStr);
+            //wprintf(L"\nNOME ORIGINALE: %s...\n", filename);
 
             tmpStr = strtok(NULL, "\b");
             totalBytes = atoi(tmpStr);
             //wprintf(L"\nASPETTO %d BYTES...\n", totalBytes);
+
+            tmpStr = strtok(NULL, "\b");
+            strcpy(originalFileSHA256, tmpStr);
+            // wprintf(L"\nSHA256: %s\n", originalFileSHA256);
 
             free(tmpStrBuff);
 
@@ -490,6 +512,7 @@ void *thread_consumeSegment(void *filename) {
     int consumedSegments = 0;
     int bytesRecv = 0;
     char *tmpStrBuff;
+    char *currentFileSHA256;
     
     FILE *wrFile = fopen((char*)filename, "wb");
 
@@ -549,7 +572,16 @@ void *thread_consumeSegment(void *filename) {
 
                 pthread_mutex_unlock(&consumeLock);
 
-                wprintf(L"\nDownload time: %.2f sec\n", elapsedTime(tvDownloadTime)/1000);
+                wprintf(L"\nDownload time: %.2f sec", elapsedTime(tvDownloadTime)/1000);
+
+                wprintf(L"\nCalculating SHA256...");
+
+                currentFileSHA256 = getFileSHA256(filename);
+
+                if(strcmp(currentFileSHA256, originalFileSHA256) == 0)
+                    wprintf(L"\rDownload completed successfully!\nSHA256: %s\n", currentFileSHA256);
+                else
+                    wprintf(L"\rThere was an error, download gone wrong!\nOriginal SHA256: %s\n Current SHA256: %s\n", originalFileSHA256, currentFileSHA256);
 
                 pthread_exit(0);
             }

@@ -16,7 +16,7 @@
 
 #define SOCKBUFLEN 64844	/* (1500+8)*43 = (MSS+HEADER_UDP)*MAX_WIN_SIZE */
 
-#define LOSS_PROB 60  		/* Probabiltà di perdita */
+#define LOSS_PROB 10  		/* Probabiltà di perdita */
 #define WIN_SIZE 10			/* Dimensione finestra */
 
 #define BIT 2
@@ -645,6 +645,37 @@ int randomSendTo(int sockfd, Segment *segment, struct sockaddr *socketInfo, int 
         return 1;
     }
     return 0;
+}
+
+/* Ritorna il codice SHA256 del file originalFileName */
+char* getFileSHA256(char *originalFileName) {
+    char getFileSHA256Cmd[10 + 256];
+    FILE *fp;
+    char *fileSHA256 = malloc(65);
+    if (fileSHA256 == NULL) {
+    	printf("Error while trying to \"malloc\" the fileSHA256 string!\nClosing...\n");
+		exit(-1);
+    }
+
+    sprintf(getFileSHA256Cmd, "sha256sum -z \"%s\" | cut -d \" \" -f 1", originalFileName);
+
+    fp = popen(getFileSHA256Cmd, "r");
+    if (fp == NULL){
+        printf("Error while trying to run the 'Get File SHA256' command!\nClosing...\n");
+		exit(-1);
+    }
+
+    if(fgets(fileSHA256, 65, fp) == NULL) {
+    	printf("Error while trying to run the 'Get File SHA256' command!\nClosing...\n");
+		exit(-1);
+    }
+
+    if (pclose(fp) == -1) {
+        printf("Error while trying to close the process for 'List file' command!\nClosing...\n");
+		exit(-1);
+    }
+
+    return fileSHA256;
 }
 
 #endif
