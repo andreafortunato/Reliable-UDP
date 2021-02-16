@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,16 +15,18 @@
 #include <ctype.h>
 #include <errno.h>
 
+#define bzero(buffer,lenght) (memset((buffer), '\0', (lenght)), (void) 0)
+
 #define SOCKBUFLEN 64844	/* (1500+8)*43 = (MSS+HEADER_UDP)*MAX_WIN_SIZE */
 
-#define LOSS_PROB 10  		/* Probabiltà di perdita */
+#define LOSS_PROB 0  		/* Probabiltà di perdita */
 #define WIN_SIZE 10			/* Dimensione finestra */
 
 #define BIT 2
 #define CMD 2
 #define WIN 11				/* Numero di cifre incluso \0 rappresentanti la dimensione della finestra */
 #define BYTE_MSG 5			/* Numero di cifre incluso \0 della lunghezza del messaggio LEN_MSG */
-#define LEN_MSG 4048		/* (4048) (6500) */
+#define LEN_MSG 4048			/* Minimo: 64(SHA256)+256(MaxFileNameLenght)+11(NumeroMassimoDiByte)+???(totalSegs) =  */
 
 /**/
 #define TRUE "1"
@@ -638,9 +641,9 @@ void orderedInsertSegToQueue(SegQueue **queueHead, Segment segment, int winPos, 
 	*/
 }
 
-int randomSendTo(int sockfd, Segment *segment, struct sockaddr *socketInfo, int addrlenSocketInfo) {
+int randomSendTo(int sockfd, Segment *segment, struct sockaddr *socketInfo, int addrlenSocketInfo, float loss_prob) {
 	int sendProb = 1 + (rand()/(float)(RAND_MAX)) * 99; // 99 = 100 - 1
-    if(sendProb > LOSS_PROB) {
+    if(sendProb > loss_prob) {
         sendto(sockfd, segment, sizeof(*segment), 0, socketInfo, addrlenSocketInfo);
         return 1;
     }

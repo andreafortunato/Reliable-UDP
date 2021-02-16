@@ -3,8 +3,8 @@
 !/*.h
 !/*.drawio
 !/cuore.png
-!/*.txt
 !/Makefile
 !/.gitignore
 client
 server
+core
