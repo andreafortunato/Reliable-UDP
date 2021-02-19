@@ -7,7 +7,6 @@
 //////////////////////////////////////////////////////////////////////////
 
 #include <time.h>
-#include <stdbool.h>
 #include "Server.h"
 
 #define IP_PROTOCOL 0
@@ -581,7 +580,7 @@ int list(ClientNode *client)
 /* Funzione download */
 int download(ClientNode *client, char *fileName)
 {   
-    char *originalFileName = fileExist(fileListHead, fileName);
+    char *originalFileName = fileExists(fileListHead, fileName);
 
     Segment *sndSegment = NULL;
     int *tmpIntBuff;
@@ -633,7 +632,7 @@ int download(ClientNode *client, char *fileName)
         int i, j;
         int currentPos = 1; 
 
-        /* Caricamento del primo pacchetto contenente \bTOTALSEGS\bNOME\b */  
+        /* Caricamento del primo pacchetto contenente \bTOTALSEGS\bNOME\bLUNGHEZZA_IN_BYTE\bCODICE_SHA256 */ 
         char tmpStrBuff[LEN_MSG];
         char *fileSHA256 = getFileSHA256(originalFileName);
 
@@ -658,7 +657,6 @@ int download(ClientNode *client, char *fileName)
                 if((ch = fgetc(file)) == EOF)
                     break;
                 buffFile[j-1] = htonl(ch);
-                //buffFile[j-1] = htonl(ch)*2; // Per controllare che l'SHA256 calcolato dal client sia diverso
             }
 
             /* Se è l'ultimo segmento imposta End-Of-Transmission-Bit a 1 */
@@ -1000,7 +998,6 @@ void *continuous_recv_thread(void *args){
 
     int lastAck = 1;
     int countAck = 0;
-    bool invalidAck;
     int rcvAck;
     int rcvAckedSeq;
     int slideSize;
@@ -1076,19 +1073,10 @@ void *continuous_recv_thread(void *args){
                 }
             }
 
-            /* Calcola se l'ACK ricevuto è inerente ad un pacchetto già riscontrato 
-               e/o rientra tra uno dei seqNum appartententi a 
-               "sndWindow[0].seqNum, sndWindow[-1].seqNum, ..., sndWindow[-(WIN_SIZE-1)].seqNum" */
-            printf("rcvAck: %d, seqNum: %d", rcvAck, atoi((client -> sndWindow)[0].seqNum));
-            invalidAck = false;
-            for(int i = 0; i < WIN_SIZE; i++) {
-                invalidAck = invalidAck || (rcvAck == normalize(atoi((client -> sndWindow)[0].seqNum), i));
-                if(invalidAck)
-                    break;
-            }
-            printf(", invalid: %d\n", invalidAck);
+            /* Calcolo della dimensione dell'eventuale slide da effettuare */
+            slideSize = normalize(rcvAck, atoi((client -> sndWindow)[0].seqNum));
 
-            if(invalidAck) {
+            if(rcvAck == atoi((client -> sndWindow)[0].seqNum) || slideSize > WIN_SIZE) {
                 //printf(" - Ack non valido\n");
                 if(rcvAck == lastAck) {
                     /* Meccanismo del Fast Retransmit: aggiunta del segmento in testa alla coda di ritrasmissione */
@@ -1123,9 +1111,6 @@ void *continuous_recv_thread(void *args){
                 pthread_rwlock_wrlock(&(client -> slideLock));
                 //printf(" - Ack valido\n");
 
-                /* Calcolo della dimensione dello slide da effettuare */
-                slideSize = normalize(rcvAck, atoi((client -> sndWindow)[0].seqNum));
-                printf("slide: %d, rcvAck: %d, seqNum: %d\n", slideSize, rcvAck, atoi((client -> sndWindow)[0].seqNum));
                 lastAck = rcvAck;
                 countAck = 1;
 

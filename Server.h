@@ -5,12 +5,6 @@
 
 #define NOFILE "File Not Found!"
 
-enum threads {
-	HANDSHAKE=0,
-	TIMEOUT=1,
-	SEND=2,
-	RECV=3};
-
 /* Struttura associata al singolo client */
 typedef struct _ClientNode {
 	unsigned int sockfd;					/* Descrittore del socket */
@@ -329,9 +323,29 @@ char* fileNameListToString(FileNode *fileListHead) {
     return fileList;
 }
 
+/* Inserimento, ordinato per nome, di un nuovo file */
+void addFile(FileNode** fileListHead, char* fileName) {
+	FileNode *newFile = newFileNode(fileName);
+
+	FileNode* current;
+    /* Special case for the head end */
+    if (*fileListHead == NULL || strcasecmp((*fileListHead)->fileName, fileName) > 0) {
+    	newFile -> next = *fileListHead;
+    	*fileListHead = newFile;
+    } else {
+        /* Locate the node before the point of insertion */
+        current = *fileListHead;
+        while (current->next != NULL && strcasecmp(current->next->fileName, fileName) < 0) {
+            current = current->next;
+        }
+        newFile->next = current->next;
+        current->next = newFile;
+    }
+}
+
 
 /* Ritorna il nome originale del file 'clientFileName' se questo esiste, NULL altrimenti */
-char *fileExist(FileNode *fileListHead, char *clientFileName) {
+char *fileExists(FileNode *fileListHead, char *clientFileName/*, char* up_down*/) {
 	char *originalFilename = NULL;
 	char fileToSearch[strlen(clientFileName)+2];
 	sprintf(fileToSearch, "%s\n", clientFileName);
@@ -340,7 +354,7 @@ char *fileExist(FileNode *fileListHead, char *clientFileName) {
 
 
 	while(fileListHead != NULL) {
-		if(strcasecmp(fileToSearch, fileListHead -> fileName) == 0) {
+		if(strcasecmp(fileToSearch, fileListHead -> fileName) == 0 && (fileListHead -> available == 1)) {
 			originalFilename = malloc(strlen(fileListHead -> fileName));
 			strcpy(originalFilename, fileListHead -> fileName);
 			originalFilename[strlen(originalFilename)-1] = '\0';

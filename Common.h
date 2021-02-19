@@ -26,12 +26,18 @@
 #define CMD 2
 #define WIN 11				/* Numero di cifre incluso \0 rappresentanti la dimensione della finestra */
 #define BYTE_MSG 5			/* Numero di cifre incluso \0 della lunghezza del messaggio LEN_MSG */
-#define LEN_MSG 4048			/* Minimo: 64(SHA256)+256(MaxFileNameLenght)+11(NumeroMassimoDiByte)+???(totalSegs) =  */
+#define LEN_MSG 2000			/* Minimo: 64(SHA256)+256(MaxFileNameLenght)+11(NumeroMassimoDiByte)+???(totalSegs) =  */
 
 /**/
 #define TRUE "1"
 #define FALSE "2"
 #define EMPTY " "
+
+enum threads {
+	HANDSHAKE=0,
+	TIMEOUT=1,
+	SEND=2,
+	RECV=3};
 
 typedef struct sockaddr_in Sockaddr_in;
 
@@ -576,21 +582,6 @@ int isSeqMinor(int rcvAck, int seqNum, int distance) {
 }
 									
 void orderedInsertSegToQueue(SegQueue **queueHead, Segment segment, int winPos, int maxSeqNumSendable) {
-
-	//printf("Sto inserendo: %d\n", atoi(segment.seqNum));
-
-	/*
-	SegQueue *node = *queueHead;
-	while(node != NULL) {
-
-		printf("%d -> ", atoi((node -> segment).seqNum));
-
-		node = node -> next;
-	}
-
-	printf("NULL\n");
-	*/
-
 	if(*queueHead == NULL) {
 		*queueHead = newSegQueue(segment, winPos);
 	} else {
@@ -607,19 +598,8 @@ void orderedInsertSegToQueue(SegQueue **queueHead, Segment segment, int winPos, 
 					*queueHead = newSegQueue(segment, winPos);
 					(*queueHead) -> next = current;
 
-					/*
-					node = *queueHead;
-					while(node != NULL) {
-						printf("%d -> ", atoi((node -> segment).seqNum));
-						node = node -> next;
-					}
-
-					printf("NULL\n");
-					*/
-
 					return;
 				}
-				
 				break;
 	        }
 	        prev = current;
@@ -629,16 +609,6 @@ void orderedInsertSegToQueue(SegQueue **queueHead, Segment segment, int winPos, 
 		prev -> next = newSegQueue(segment, winPos);
 		prev -> next -> next = current;
 	}
-
-	/*
-	node = *queueHead;
-	while(node != NULL) {
-		printf("%d -> ", atoi((node -> segment).seqNum));
-		node = node -> next;
-	}
-
-	printf("NULL\n");
-	*/
 }
 
 int randomSendTo(int sockfd, Segment *segment, struct sockaddr *socketInfo, int addrlenSocketInfo, float loss_prob) {

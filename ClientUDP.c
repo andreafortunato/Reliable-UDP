@@ -12,18 +12,19 @@ typedef struct sockaddr_in Sockaddr_in;
 int handshake();
 int list();
 int download(char*);
+int upload(FILE*);
 void cpOnFile(FILE*, char*, int);
-int allReceived();
 void *thread_consumeSegment(void *);
 void *thread_consumeFileList(void *);
 void *fin_thread(void*);
 
 void ctrl_c_handler();
 void resetData();
+void checkIfMustDie(int);
 
 int debug = 0;              /* 1 se l'utente vuole avviare il client in modalità 'Debug' 
                                per visualizzare informazioni aggiuntive, 0 altrimenti */
-/* Variabili per il download */
+
 int sockfd;
 int blockMain;
 pthread_t finTid;
@@ -31,6 +32,8 @@ int renewBind = 0;
 int loss_prob = LOSS_PROB;
 
 FILE *wrFile;
+
+char fileToUploadName[256];
 
 int lastSeqNumSent;
 int lastSeqNumRecv;
@@ -58,6 +61,31 @@ int addrlenMainServerSocket;
 /* Sockaddr_in server, utilizzata per l'esecuzione delle operazioni */
 Sockaddr_in operationServerSocket;
 int addrlenOperationServerSocket;
+
+/* Prototipi e variabili per l'upload */
+void *timeout_thread();
+void *continuous_send_thread();
+void *continuous_recv_thread();
+
+pthread_t sendTid;                      /* ID del Thread Send */
+pthread_t recvTid;                      /* ID del Thread Recv */
+pthread_t timeTid;                      /* ID del Thread Timeout */
+int recvDead;
+int mustDie[4];
+
+SegQueue *queueHead;
+double RTO;
+struct timeval segTimeout[WIN_SIZE];
+struct timeval segRtt[WIN_SIZE];
+int sendQueue;
+int segToSend[WIN_SIZE];
+int segSent[WIN_SIZE];
+int rttFlag[WIN_SIZE];
+int sndWinPos;
+int sndPos; 
+
+pthread_mutex_t queueLock;
+pthread_rwlock_t slideLock; 
 
 // Main - Client
 int main(int argc, char *argv[]) 
@@ -169,7 +197,7 @@ int main(int argc, char *argv[])
 
             case 2:
                 /* Comando download */
-                wprintf(L"Filename: ");
+                wprintf(L"File to download: ");
                 scanf("%s", filename);
 
                 /* Fase di handshake */
@@ -196,11 +224,37 @@ int main(int argc, char *argv[])
                 break;
 
             case 3:
+                /* Comando upload */
+                wprintf(L"File to upload (write file name or full path): ");
+                scanf("%s", fileToUploadName);
+
+                FILE *fileToUpload = fopen(fileToUploadName, "rb");
+                if(fileToUpload == NULL){
+                    wprintf(L"[ERROR] File not found. Check the file name (it is Case Sensitive!)\n");
+                    break;
+                }
+
                 /* Fase di handshake */
                 if(handshake() == -1) {
                     wprintf(L"\nError during handshake phase\n");
                     break;  
                 } 
+
+                /* Operazione upload */
+                if(upload(fileToUpload) == -1) {
+                    //blockMain = 0;
+                    break;
+                }
+
+                /* Fase di chiusura */
+                strcpy(isAck, TRUE);
+                if(pthread_create(&finTid, NULL, fin_thread, NULL) != 0)
+                {
+                    wprintf(L"New client thread error\n");
+                    exit(-1);
+                }
+                pthread_join(finTid, NULL);
+
                 break;
 
             case 4:
@@ -215,7 +269,7 @@ int main(int argc, char *argv[])
                 break;
         }
         //close(sockfd);
-        while(blockMain == 1);
+        // while(blockMain == 1);
     } 
 
     return 0; 
@@ -638,18 +692,6 @@ void *thread_consumeFileList(void *args) {
     }
 }
 
-// DA TOGLIERE
-int allReceived() {
-    int allPktReceived = 1;
-    for(int i=0; i<WIN_SIZE; i++) {
-        if(rcvWinFlag[i] != 0) {
-            allPktReceived = 0;
-            break;
-        }
-    }
-    return allPktReceived;
-}
-
 int download(char *filename) {
 
     int *tmpIntBuff;
@@ -880,6 +922,447 @@ int download(char *filename) {
 
     
     return 0;
+}
+
+int upload(FILE *fileToUpload) {
+    Segment *sndSegment = NULL;
+    int *tmpIntBuff;
+
+    int ret;
+    int *joinRet;
+
+    fseek(fileToUpload, 0, SEEK_END);
+    int fileLen = ftell(fileToUpload);
+    fseek(fileToUpload, 0, SEEK_SET);
+
+    /* Formula della vita: (A-1)/B+1, parte intera superiore della divisione A/B */
+    int totalSegs = (fileLen-1)/(LEN_MSG) + 1;
+
+    ret = pthread_create(&timeTid, NULL, timeout_thread, NULL);
+    if(ret != 0)
+    {
+        wprintf(L"New timeout thread error\n");
+        exit(-1);
+    }
+    ret = pthread_create(&sendTid, NULL, continuous_send_thread, NULL);
+    if(ret != 0)
+    {
+        wprintf(L"New continuous send thread error\n");
+        exit(-1);
+    }
+    ret = pthread_create(&recvTid, NULL, continuous_recv_thread, NULL);
+    if(ret != 0)
+    {
+        wprintf(L"New continuous recv thread error\n");
+        exit(-1);
+    }
+
+    int buffFile[LEN_MSG];
+    int ch;
+    int i, j;
+    int currentPos = 1; 
+
+    /* Caricamento del primo pacchetto contenente \bTOTALSEGS\bNOME\bLUNGHEZZA_IN_BYTE\bCODICE_SHA256 */
+    char tmpStrBuff[LEN_MSG];
+    char *fileSHA256 = getFileSHA256(fileToUploadName);
+
+
+    sprintf(tmpStrBuff, "\b%d\b%s\b%d\b%s\b", totalSegs+1, fileToUploadName, fileLen, fileSHA256);
+    tmpIntBuff = strToInt(tmpStrBuff);
+    newSegment(&sndSegment, FALSE, 1, -1, FALSE, FALSE, FALSE, "3", strlen(tmpStrBuff), tmpIntBuff);
+
+    sndWindow[sndWinPos] = *sndSegment;
+    segToSend[sndWinPos] = 1;
+    sndWinPos++;
+
+    free(tmpIntBuff);
+
+    /* Caricamento segmenti da inviare nella finestra sndWindow */
+    for(i=1; i<=totalSegs; i++) {
+        // checkIfMustDie(HANDSHAKE);
+        
+        /* Lettura di LEN_MSG caratteri convertiti in formato network e memorizzati in buffFile (Endianness problem) */
+        bzero(buffFile, LEN_MSG);
+        for(j = 1; j <= LEN_MSG; j++, currentPos++) {
+            if((ch = fgetc(fileToUpload)) == EOF)
+                break;
+            buffFile[j-1] = htonl(ch);
+        }
+
+        /* Se è l'ultimo segmento imposta End-Of-Transmission-Bit a 1 */
+        if(i == totalSegs)
+            newSegment(&sndSegment, TRUE, (i%maxSeqNum)+1, -1, FALSE, FALSE, FALSE, "3", j-1, buffFile);
+        else
+            newSegment(&sndSegment, FALSE, (i%maxSeqNum)+1, -1, FALSE, FALSE, FALSE, "3", j-1, buffFile);
+
+        /* Attendi slide finestra per il caricamento di altri segmenti */
+        while(sndWinPos >= WIN_SIZE) {
+            // checkIfMustDie(HANDSHAKE);
+            
+            if(recvDead) {
+                fclose(fileToUpload);
+                
+                pthread_join(recvTid, (void**)&joinRet);
+                wprintf(L"VALORE RITORNATO DALLA JOIN: %d\n", *((int*)joinRet));
+                if(*((int*)joinRet) == -1)
+                    return -1;
+            }
+        }
+
+        pthread_rwlock_rdlock(&slideLock);
+
+        sndWinPos++;
+
+        sndWindow[sndWinPos-1] = *sndSegment;
+        segToSend[sndWinPos-1] = 1;
+
+        // wprintf(L"\n[MAIN] -> Caricato pacchetto: (seqNum: %d) - (sndWinPos: %d)\n", atoi(sndSegment -> seqNum), sndWinPos-1);
+
+        if(pthread_rwlock_unlock(&slideLock) != 0) {
+            wprintf(L"%d : %s\n", errno, strerror(errno));
+            exit(-1);
+        }
+    }
+
+    //wprintf(L"Fine caricamento pacchetti\n");
+    fclose(fileToUpload);
+
+    pthread_join(recvTid, (void**)&joinRet);
+    if(*joinRet == -1)
+        return -1;
+
+    return 0;
+}
+
+void *timeout_thread() {
+    
+    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+
+    int timeoutPos = 0;    
+    int maxSeqNumSendable;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    tv.tv_sec += 86400; // Per impostare un timeout molto elevato, nel "futuro"
+
+    while(1) {
+        checkIfMustDie(TIMEOUT);
+
+        pthread_rwlock_rdlock(&slideLock);
+
+        /* Se il segmento sndWindow[timeoutPos] è stato inviato allora controlla il suo timeout */
+        if(segSent[timeoutPos] == 1) {
+            /* Se il timeout per il segmento in esame è scaduto */
+            if(elapsedTime(segTimeout[timeoutPos]) > 100) {
+                
+                pthread_mutex_lock(&queueLock);
+
+                /*************************************************************************************************************************/
+                // wprintf(L"\n[TIMEOUT] -> Timeout scaduto: (seqNum: %d) - (timeoutPos: %d)\n", atoi(sndWindow[timeoutPos].seqNum), timeoutPos);
+                /**************************************************************************************************************************/
+
+                segTimeout[timeoutPos] = tv;
+
+                //wprintf(L"sndWindow[0].seqNum: %s - WIN_SIZE: %d - maxSeqNum: %d ", sndWindow[0].seqNum, WIN_SIZE, maxSeqNum);
+                maxSeqNumSendable = (atoi(sndWindow[0].seqNum) + WIN_SIZE-2)%(maxSeqNum) + 1;
+                //wprintf(L"SNDWINDOW[0]: %s - maxSeqNumSendable: %d - ", sndWindow[0].seqNum, maxSeqNumSendable);
+                orderedInsertSegToQueue(&queueHead, sndWindow[timeoutPos], timeoutPos, maxSeqNumSendable);
+
+                if(pthread_mutex_unlock(&queueLock) != 0) {
+                    wprintf(L"%d : %s\n", errno, strerror(errno));
+                    exit(-1);
+                }
+            }
+        }
+
+        timeoutPos = (timeoutPos+1) % WIN_SIZE;
+
+        if(pthread_rwlock_unlock(&slideLock) != 0) {
+            wprintf(L"%d : %s\n", errno, strerror(errno));
+            exit(-1);
+        }
+    }
+}
+
+void *continuous_send_thread() {
+
+    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+    
+    SegQueue *prev;
+
+    while(1) {
+        checkIfMustDie(SEND);
+        /* Attesa sblocco coda di trasmissione da parte del thread recv */
+        if(sendQueue == 0)
+            continue;
+
+        pthread_rwlock_rdlock(&slideLock);
+
+        /* Invio dell'intera coda */
+        while(queueHead != NULL && sendQueue == 1) {
+            checkIfMustDie(SEND);
+
+            pthread_mutex_lock(&queueLock);
+
+            //wprintf(L"\n[SEND] -> Invio pacchetto in coda: (seqNum: %d) - (winPos: %d)\n", atoi((queueHead -> segment).seqNum), queueHead -> winPos);
+            /*************************************************************************************************************************/
+            //wprintf(L"\nsegTimeout[%d]: %ld\n", queueHead -> winPos, segTimeout[queueHead -> winPos].tv_sec);
+            /**************************************************************************************************************************/
+            if(randomSendTo(sockfd, &(queueHead -> segment), (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket, loss_prob) == 1) {
+                // wprintf(L"\n[RAND_SENDTO-QUEUE] -> pacchetto inviato seqNum: "); //wprintf(L"%d\n", atoi((queueHead -> segment).seqNum));
+                // if(queueHead == NULL) {
+                //     wprintf(L"queueHead NULL\n");
+                //     exit(-1);
+                // }else {
+                //     wprintf(L"%d\n", atoi((queueHead -> segment).seqNum));
+                // }
+            }
+            else {
+                // wprintf(L"\n[RAND_SENDTO-QUEUE] -> pacchetto perso seqNum: "); wprintf(L"%d\n", atoi((queueHead -> segment).seqNum));
+            }
+            /**************************************************************************************************************************/
+
+            /* Imposta il nuovo timestamp */
+            gettimeofday(&segTimeout[queueHead -> winPos], NULL);
+
+            /* Controllo se il segmento queueHead -> segment è già stato riscontrato allora 
+               resettiamo il timestamp per il calcolo di un nuovo rtt */
+            if(rttFlag[queueHead -> winPos] == 1) {
+                gettimeofday(&segRtt[queueHead -> winPos], NULL);
+                rttFlag[queueHead -> winPos] = 0;
+            }
+            
+            prev = queueHead;
+            queueHead = queueHead -> next;
+            free(prev);
+
+            if(pthread_mutex_unlock(&queueLock) != 0) {
+                wprintf(L"%d : %s\n", errno, strerror(errno));
+                exit(-1);
+            }
+        }
+       
+        /* (Primo controllo) Se la recv ha ricevuto un ACK 'corretto', interrompe l'invio della coda (sendQueue=0)
+           e resetta lo stato della send;
+           (Secondo controllo) Se ho inviato tutta la finestra (ovvero tutti i segToSend sono uguali a 0) resetto 
+           lo stato della send */
+        if(sendQueue == 0 || segToSend[sndPos] == 0) {
+            if(pthread_rwlock_unlock(&slideLock) != 0) {
+                wprintf(L"%d : %s\n", errno, strerror(errno));
+                exit(-1);
+            }
+            continue;
+        }
+
+        /* Impostiamo il timestamp per il calcolo dell'rtt */
+        gettimeofday(&segRtt[sndPos], NULL);
+        
+        if(randomSendTo(sockfd, &(sndWindow[sndPos]), (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket, loss_prob) == 1) {
+            // wprintf(L"\n[RAND_SENDTO] -> pacchetto inviato seqNum: %d - (sndPos: %d)\n", atoi(sndWindow[sndPos].seqNum), sndPos);
+        }
+        else {
+            // wprintf(L"\n[RAND_SENDTO] -> pacchetto perso seqNum: %d - (sndPos: %d)\n", atoi(sndWindow[sndPos].seqNum), sndPos);
+        }
+        
+        /* Impostiamo il timestamp per il calcolo del timeout */
+        gettimeofday(&segTimeout[sndPos], NULL);
+
+        segToSend[sndPos] = 0;
+        segSent[sndPos] = 1;
+
+        sndPos = (sndPos+1) % WIN_SIZE;
+
+        if(pthread_rwlock_unlock(&slideLock) != 0) {
+            wprintf(L"%d : %s\n", errno, strerror(errno));
+            exit(-1);
+        }
+    }
+}
+
+void *continuous_recv_thread(){
+    
+    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+    
+    RTT_Data *rttData = initData();
+
+    Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
+    if(rcvSegment == NULL)
+    {
+        wprintf(L"Error while trying to \"malloc\" a new rcvSegment!\nClosing...\n");
+        exit(-1);
+    }
+
+    int *joinRet = malloc(1*sizeof(int));
+
+    int lastAck = 1;
+    int countAck = 0;
+    int rcvAck;
+    int rcvAckedSeq;
+    int slideSize;
+    int rttPos;
+    int tmpPos;
+    char *tmpStrBuff;
+    SegQueue *head;
+
+    struct timeval deadLineTimeout;
+    struct timeval repeatTimeout;
+    repeatTimeout.tv_sec = 0;
+    repeatTimeout.tv_usec = 100*1000;
+
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &repeatTimeout, sizeof(repeatTimeout)) < 0) {
+        wprintf(L"\nError while setting repeatTimeout-timeout\n");
+        exit(-1);
+    }
+
+    gettimeofday(&deadLineTimeout, NULL);
+    while(1) {
+        checkIfMustDie(RECV);
+        if(recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket) < 0) {
+            if(elapsedTime(deadLineTimeout) > 60*1000) {
+                wprintf(L"RECV FALLITA\n");
+
+                // Free della struttura dati thread
+                *joinRet = -1;
+                wprintf(L"Ora termino\n");
+                recvDead = 1;
+                pthread_exit(joinRet);
+            }
+            else
+                continue;
+        }
+        gettimeofday(&deadLineTimeout, NULL);
+
+        tmpStrBuff = intToStr(rcvSegment -> msg, atoi(rcvSegment -> lenMsg));
+        rcvAck = atoi(rcvSegment -> ackNum);
+        rcvAckedSeq = atoi(tmpStrBuff);
+        // wprintf(L"\n[RECV] -> Ricevuto ACK: (seqNum: %d) - (ackNum: %d) - (seqNumAcked: %d)\n", atoi(rcvSegment -> seqNum), rcvAck, rcvAckedSeq);
+        free(tmpStrBuff);
+
+        /* Se l'ack ricevuto ha il fin bit impostato ad 1 allora il server ha ricevuto tutto e
+           ha chiesto la chiusura della connessione */
+        if(atoi(rcvSegment -> finBit) == 1) {
+            //wprintf(L"\n[RECV] -> Ricevuto pacchetto di FIN: (seqNum: %d) - (ackNum: %d)\n", atoi(rcvSegment -> seqNum), rcvAck);
+            checkIfMustDie(RECV);
+            
+            // Free della struttura dati thread
+            *joinRet = 0;
+            pthread_exit(joinRet);
+        }
+
+        /* Se c'è almeno un segmento caricato processa l'ack */
+        if(sndWinPos != 0) {
+
+            /* Aggiornamento dell'RTO */
+            rttPos = normalizeDistance(rcvAckedSeq, atoi(sndWindow[0].seqNum));
+            if(rttPos < WIN_SIZE) {
+                //wprintf(L"\nRTT_FLAG[%d] = %d - %d\n", rttPos, rttFlag[rttPos], atoi(sndWindow[0].seqNum));
+                if(rttFlag[rttPos] == 0) {
+                    RTO = calculateRTO(segRtt[rttPos], rttData);
+                    rttFlag[rttPos] = 1;
+                }
+            }
+
+            /* Calcolo della dimensione dell'eventuale slide da effettuare */
+            slideSize = normalize(rcvAck, atoi(sndWindow[0].seqNum));
+
+            if(rcvAck == atoi(sndWindow[0].seqNum) || slideSize > WIN_SIZE) {
+                //wprintf(L" - Ack non valido\n");
+                if(rcvAck == lastAck) {
+                    /* Meccanismo del Fast Retransmit: aggiunta del segmento in testa alla coda di ritrasmissione */
+                    if(++countAck == 3) {
+                        pthread_rwlock_wrlock(&slideLock);
+                        //wprintf(L"\n[RECV] -> Fast Retransmit for seqNum: %d\n", rcvAck);
+                        countAck = 0;
+                        if(queueHead == NULL || atoi((queueHead -> segment).seqNum) != rcvAck) {
+                            sendQueue = 0; // Stoppiamo il send durante la trasmissione della coda
+                            
+                            head = queueHead;
+                            tmpPos = 0;
+                            while(atoi(sndWindow[tmpPos++].seqNum) != rcvAck);
+                            queueHead = newSegQueue(sndWindow[tmpPos-1], tmpPos-1);
+                            queueHead -> next = head;
+                            sendQueue = 1; // Riavviamo il send durante la trasmissione della coda
+                        }
+                        if(pthread_rwlock_unlock(&slideLock) != 0) {
+                            wprintf(L"%d : %s\n", errno, strerror(errno));
+                            exit(-1);
+                        }
+                    }
+                } else {
+                    lastAck = rcvAck;
+                    countAck = 1;
+                }
+            }
+            /* Se l'ACK ricevuto è valido, allora permette uno slide della finestra (rientra tra sndWindow[1].seqNum, ..., sndWindow[WIN_SIZE-1].seqNum) */ 
+            else {
+                sendQueue = 0; // Stoppiamo il send durante la trasmissione della coda
+                pthread_rwlock_wrlock(&slideLock);
+                //wprintf(L" - Ack valido\n");
+
+                lastAck = rcvAck;
+                countAck = 1;
+
+                /* Eliminazione dalla coda di tutti i segmenti più vecchi rispetto all'ack appena ricevuto */
+                int maxSeqNumSendable = (atoi(sndWindow[0].seqNum) + WIN_SIZE-2)%(maxSeqNum) + 1;
+                int distance = normalizeDistance(maxSeqNumSendable, rcvAck);
+                distance = distance >= WIN_SIZE ? WIN_SIZE-1 : distance;
+                // wprintf(L"Slide: %d\n", slideSize);
+                SegQueue *current = queueHead;
+                SegQueue *prev = queueHead;
+                while(current != NULL) {
+                    prev = current;
+                    current = current -> next;
+                    if(isSeqMinor(rcvAck, atoi((prev -> segment).seqNum), distance)) {
+                        deleteSegFromQueue(&queueHead, prev);
+                    }
+                    else
+                        prev -> winPos -= slideSize;
+                }
+
+                /* Se lo slide da effettuare è totale allora resetta tutte le strutture dati flag */  
+                if(slideSize == WIN_SIZE) {
+                    memset(&segToSend[0], 0, sizeof(int)*slideSize);
+                    memset(&segSent[0], 0, sizeof(int)*slideSize);
+                    memset(&rttFlag[0], 0, sizeof(int)*slideSize);                    
+                }
+                else {
+                    /* Slide di tutte le strutture dati */
+                    // Crashava qui, il comando LIST
+                    memmove(segToSend, &segToSend[slideSize], sizeof(int)*(WIN_SIZE-slideSize));
+                    memset(&segToSend[WIN_SIZE-slideSize], 0, sizeof(int)*slideSize);
+
+                    memmove(segSent, &segSent[slideSize], sizeof(int)*(WIN_SIZE-slideSize));
+                    memset(&segSent[WIN_SIZE-slideSize], 0, sizeof(int)*slideSize);
+
+                    memmove(rttFlag, &rttFlag[slideSize], sizeof(int)*(WIN_SIZE-slideSize));
+                    memset(&rttFlag[WIN_SIZE-slideSize], 0, sizeof(int)*slideSize);
+
+                    memmove(segTimeout, &segTimeout[slideSize], sizeof(struct timeval)*(WIN_SIZE-slideSize));
+
+                    memmove(segRtt, &segRtt[slideSize], sizeof(struct timeval)*(WIN_SIZE-slideSize));
+
+                    memmove(sndWindow, &sndWindow[slideSize], sizeof(Segment)*(WIN_SIZE-slideSize));                    
+                }
+
+                /* Se si era arrivati all'invio di un pacchetto in posizione X
+                   ed è stato fatto uno slide di Y allora riprendi il caricamento/invio 
+                   dalla posizione X-Y */
+                sndWinPos -= slideSize;
+                if(sndPos != 0){
+                    sndPos -= slideSize;
+                } else {
+                    sndPos = sndWinPos;
+                }
+
+                sendQueue = 1; // Riavviamo il send durante la trasmissione della coda
+
+                if(pthread_rwlock_unlock(&slideLock) != 0) {
+                    wprintf(L"%d : %s\n", errno, strerror(errno));
+                    exit(-1);
+                }
+            }
+        }
+        //else wprintf(L" - ACK IGNORATO\n");
+    }
 }
 
 void cpOnFile(FILE *wrFile, char *content, int len) {       
@@ -1199,4 +1682,9 @@ void resetData() {
     memset(sndWinFlag, '\0', sizeof(int)*WIN_SIZE);
     memset(rcvWindow, '\0', sizeof(Segment)*WIN_SIZE);
     memset(rcvWinFlag, '\0', sizeof(int)*WIN_SIZE);
+}
+
+void checkIfMustDie(int threadNum) {
+    if(mustDie[threadNum])
+        pthread_exit(NULL);
 }
