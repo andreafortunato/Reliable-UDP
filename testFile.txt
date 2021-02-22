@@ -1,3 +1,4 @@
-Ciao1
-Ciao2 Ciao2
-Ciao3 Ciao3 Ciao3
+Il software sviluppato utilizza il protocollo di trasporto UDP
+per realizzare le operazioni di list, upload e download di file.
+UDP è un protocollo senza connessione, che offre un servizio non
+affidabile ed una consegna non strettamente ordinata dei dati.

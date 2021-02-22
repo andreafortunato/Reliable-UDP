@@ -1,3 +1,10 @@
+/* 
+    Library for the client.c - FTP on UDP 
+
+    Authors: Enrico D'Alessandro & Andrea Fortunato
+    IIW (A.Y. 2019-2020) at Università di Tor Vergata in Rome.
+*/
+
 #ifndef CLIENT_H
 #define CLIENT_H
 
@@ -15,6 +22,7 @@ typedef struct _ThreadArgs {
 
 } ThreadArgs;
 
+/* Inizializzazione struct ThreadArgs */
 ThreadArgs* newThreadArgs(Sockaddr_in serverSocket, int sockfd, char *isAck) {
 	ThreadArgs *threadArgs = (ThreadArgs *) malloc(sizeof(ThreadArgs));
 	if(threadArgs != NULL)
@@ -84,7 +92,9 @@ int clientChoice()
 	return choice;
 }
 
+/* Stampa della barra progressiva per il download */
 void printDownloadStatusBar(int bytesRecv, int totalBytes, int *oldHalfPercentage) {
+
 	wchar_t ok = 0x2588;			/* █ */
 	// wchar_t no = 0x2591;			/* ░ */
 
@@ -93,21 +103,6 @@ void printDownloadStatusBar(int bytesRecv, int totalBytes, int *oldHalfPercentag
 	int old = *oldHalfPercentage;
 
 	int toWrite = halfPercentage - old;
-
-	// FUNZIONA MA OGNI VOLTA RISCRIVE TUTTO!
-	// if(toWrite > 0) {
-	// 	wprintf(L"[");
-	//     for (int i = 0; i < halfPercentage; i++) {
-	//         wprintf(L"%lc", 0x2588);
-	//     }
-	//     for (int i = 0; i < 50-halfPercentage; i++) {
-	//         wprintf(L"%lc", 0x2591);
-	//     }
-	//     wprintf(L"]");
-
-	//     *oldHalfPercentage = halfPercentage;
-	// }
-
 	
 	if(toWrite > 0) {
 		wprintf(L"\r\033[%dC", old+2);

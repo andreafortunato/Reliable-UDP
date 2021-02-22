@@ -1,3 +1,10 @@
+/* 
+    Library for the server.c and client.c- FTP on UDP 
+
+    Authors: Enrico D'Alessandro & Andrea Fortunato
+    IIW (A.Y. 2019-2020) at Università di Tor Vergata in Rome.
+*/
+
 #ifndef COMMON_H
 #define COMMON_H
 
@@ -17,18 +24,15 @@
 
 #define bzero(buffer,lenght) (memset((buffer), '\0', (lenght)), (void) 0)
 
-#define SOCKBUFLEN 64844	/* (1500+8)*43 = (MSS+HEADER_UDP)*MAX_WIN_SIZE */
-
-#define LOSS_PROB 0  		/* Probabiltà di perdita */
+#define LOSS_PROB 0 		/* Probabiltà di perdita */
 #define WIN_SIZE 10			/* Dimensione finestra */
 
 #define BIT 2
 #define CMD 2
 #define WIN 11				/* Numero di cifre incluso \0 rappresentanti la dimensione della finestra */
 #define BYTE_MSG 5			/* Numero di cifre incluso \0 della lunghezza del messaggio LEN_MSG */
-#define LEN_MSG 2000			/* Minimo: 64(SHA256)+256(MaxFileNameLenght)+11(NumeroMassimoDiByte)+???(totalSegs) =  */
+#define LEN_MSG 4096		/* Lunghezza messaggio */
 
-/**/
 #define TRUE "1"
 #define FALSE "2"
 #define EMPTY " "
@@ -37,35 +41,38 @@ enum threads {
 	HANDSHAKE=0,
 	TIMEOUT=1,
 	SEND=2,
-	RECV=3};
+	RECV=3
+};
 
 typedef struct sockaddr_in Sockaddr_in;
 
+/* Struttura dati associata al Segmento */
 typedef struct _Segment {
 	char eotBit[BIT];				/* End Of Transmission Bit: posto ad 1 se l'operazione (download/upload/list)
 									   è conclusa con successo, 0 altrimenti */
 	char seqNum[WIN];				/* Numero di sequenza del client/server */
 	char ackNum[WIN];				/* Ack del segmento ricevuto */
 	
-	char synBit[BIT];          
-	char ackBit[BIT];
-	char finBit[BIT];
+	char synBit[BIT];          		/* Bit di syn */
+	char ackBit[BIT];				/* Bit di ack */
+	char finBit[BIT];				/* Bit di fin */
 
-	char winSize[WIN];				/*  */
+	char winSize[WIN];				/* Dimensione finestra */
 
 	char cmdType[CMD];				/* Operazione richiesta */
 	char lenMsg[BYTE_MSG];			/* Lunghezza, in byte, del campo msg */
 	int msg[LEN_MSG];				/* Contenuto del messaggio */
 } Segment;
 
+/* Struttura dati associata alla coda di segmenti da reinviare */
 typedef struct _SegQueue {
 	Segment segment;
 	int winPos;
 
 	struct _SegQueue *next;
-	// struct _SegQueue *prev;
 } SegQueue;
 
+/* Struttura dati associata al calcolo dell'RTO */
 typedef struct _RTT_Data {
 	double sRTT;
 	double varRTT;
@@ -130,6 +137,7 @@ Segment* mallocSegment(char *eotBit, int seqNum, int ackNum, char *synBit, char 
 	return segment;
 }
 
+/* Creazione di un nuovo nodo SegQueue */
 SegQueue* newSegQueue(Segment segment, int winPos) {
 	SegQueue *segQueue = malloc(sizeof(SegQueue));
 	if(segQueue != NULL) {
@@ -146,6 +154,7 @@ SegQueue* newSegQueue(Segment segment, int winPos) {
 	return segQueue;
 }
 
+/* Aggiunta di un SegQueue in coda della coda di ritrasmissione */
 void appendSegToQueue(SegQueue **queueHead, Segment segment, int winPos) {
 	if(*queueHead == NULL) {
 		*queueHead = newSegQueue(segment, winPos);
@@ -159,10 +168,10 @@ void appendSegToQueue(SegQueue **queueHead, Segment segment, int winPos) {
 		}
 
 		current -> next = newSegQueue(segment, winPos);
-		// (current -> next) -> prev = current;
 	}
 }
 
+/* Eliminazione di un SegQueue dalla coda di ritrasmissione */
 void deleteSegFromQueue(SegQueue **queueHead, SegQueue *segment) {
 	SegQueue *current, *prev;
 	current = *queueHead;
@@ -190,6 +199,7 @@ void deleteSegFromQueue(SegQueue **queueHead, SegQueue *segment) {
 	}
 }
 
+/* Inizializzazione parametri per il calcolo dll'RTO */
 RTT_Data* initData() {
 
 	RTT_Data *rttData = malloc(sizeof(RTT_Data));
@@ -434,6 +444,7 @@ int parseCmdLine(int argc, char **argv, char *who, char **ip, int *debug)
 	}
 }
 
+/* Converte un insieme di caratteri in formato network */
 int* strToInt(char* inStr) {
 	int len = strlen(inStr)*sizeof(int);
 	int *outInt = malloc(len);
@@ -450,6 +461,7 @@ int* strToInt(char* inStr) {
 	return outInt;
 }
 
+/* Converto un insieme di caratteri in formato host */
 char* intToStr(int* inInt, int len) {
 	char *outStr = malloc(len+1);
 	if(outStr == NULL) {
@@ -465,14 +477,13 @@ char* intToStr(int* inInt, int len) {
 	return outStr;
 }
 
+/* Funzione per la ricezione controllata di segmenti */
 int recvSegment(int sockFd, Segment *segment, Sockaddr_in *socket, int *socketLen) {
 
 	bzero(segment, sizeof(Segment));
 	int ret;
 	while(1){
             if((ret = recvfrom(sockFd, segment, sizeof(Segment), 0, (struct sockaddr*)socket, (socklen_t*)socketLen)) < 0) {
-                // wprintf(L"[Error]: recvfrom failed for %s:%d\n", inet_ntoa(socket -> sin_addr), ntohs(socket -> sin_port));
-                // exit(-1);
                 return ret;
             }
             if((strlen(segment -> eotBit) == 0) || (strlen(segment -> seqNum) == 0) || 
@@ -489,52 +500,22 @@ int recvSegment(int sockFd, Segment *segment, Sockaddr_in *socket, int *socketLe
     }
 
     return ret;
-
 }
 
-int sup(int dividend, int divisor) {
-	return ((dividend-1)/divisor)+1;
-}
-
-int rcvWinSlot(int lastSeqNumRcv, int lastAckedSeqNum) {	
-	return (lastSeqNumRcv - lastAckedSeqNum);
-}
-
-void slideWin() {
-
-}
-
+/* Calcola il tempo trascorso da prevTime */
 double elapsedTime(struct timeval prevTime) {
-	// struct timeval t1, t2;
- //    double elapsedTime;
-
- //    // start timer
- //    gettimeofday(&t1, NULL);
-
- //    usleep(150000);
-
- //    // stop timer
- //    gettimeofday(&t2, NULL);
-
- //    // compute and print the elapsed time in millisec
- //    elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000;      // sec to ms
- //    elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
- //    printf("%.3f\n", elapsedTime);
-
 	struct timeval currentTime;
     double elapsedTime;
 
-    // start timer
     gettimeofday(&currentTime, NULL);
 
-    // compute and print the elapsed time in millisec
     elapsedTime = (currentTime.tv_sec - prevTime.tv_sec) * 1000;      // da secondi a ms
     elapsedTime += (currentTime.tv_usec - prevTime.tv_usec) / 1000.0;   // da microsecondi a ms
-    //printf("%.3f\n", elapsedTime);
 
     return elapsedTime;
 }
 
+/* Funzione per il calcolo dell'RTO */
 double calculateRTO(struct timeval sendTime, RTT_Data *rttData) {
 
 	double RTT = 0;
@@ -545,31 +526,37 @@ double calculateRTO(struct timeval sendTime, RTT_Data *rttData) {
 	}
 	else {
 		RTT = elapsedTime(sendTime);
-		rttData -> sRTT = (0.875*rttData -> sRTT) + (RTT*0.125);    					 // sRTT = (1-alpha)*sRTT + aplha*RTT, alpha = 0.125 = 1/8
-		rttData -> varRTT = (0.75*rttData -> varRTT) + ((RTT-rttData -> sRTT) < 0 ? (rttData->sRTT - RTT):(RTT-rttData->sRTT ))*0.25; // varRTT = (1-beta)*varRTT + beta*|RTT - sRTT|, beta = 0.25 = 1/4
+		// sRTT = (1-alpha)*sRTT + aplha*RTT, alpha = 0.125 = 1/8
+		rttData -> sRTT = (0.875*rttData -> sRTT) + (RTT*0.125); 
+		// varRTT = (1-beta)*varRTT + beta*|RTT - sRTT|, beta = 0.25 = 1/4
+		rttData -> varRTT = (0.75*rttData -> varRTT) + ((RTT-rttData -> sRTT) < 0 ? (rttData->sRTT - RTT):(RTT-rttData->sRTT ))*0.25; 
 	}
 
-	//printf("\nRTT: %.3f, sRTT: %.3f, varRTT: %.3f, RTO: %.3f\n", RTT, rttData->sRTT, rttData->varRTT, rttData -> sRTT + (rttData -> varRTT*4));
+	// RTO = sRTT + 4*varRTT
+	RTO = rttData -> sRTT + (rttData -> varRTT*4);	
 
-	RTO = rttData -> sRTT + (rttData -> varRTT*4);	// RTO = sRTT + 4*varRTT
-
+	// RTO massimo 60 secondi e minimo 1 secondo
 	return RTO > 60000 ? 60000 : (RTO < 1000 ? 1000 : RTO);
 }
 
-int normalize(int num1, int num2) {
+/* Ritorna la distanza tra l'ack ricevuto e il primo pacchetto presente nella finestra di invio  */
+int calcSlideSize(int num1, int num2) {
 	if((num1 - num2) <= 0)
 		return num1-num2+(WIN_SIZE*2);
 	else
 		return num1-num2;
 }
 
+/* Ritorna la distanza tra due pacchetti, 0 se hanno lo stesso seqNum */
 int normalizeDistance(int num1, int num2) {
 	if((num1 - num2) < 0)
 		return num1-num2+(WIN_SIZE*2);
 	else
 		return num1-num2;
 }
-					
+			
+/* Ritorna 1 se rcvAck è sequenzialmente inferiore di seqNum, 0 altrimenti */		
+/* WIN_SIZE = 3, MAX_SEQ_NUM = 6, 1 2 3 4 5 "6" 1 2 3 ..., il numero 6 è più piccolo di 1 */
 int isSeqMinor(int rcvAck, int seqNum, int distance) {
 	int check;
 	for(int i = -1; i < distance; i++) {
@@ -580,7 +567,8 @@ int isSeqMinor(int rcvAck, int seqNum, int distance) {
     }
     return 1;
 }
-									
+			
+/* Inserimento ordinato di un SegQueue nella coda di ritrasmissione */						
 void orderedInsertSegToQueue(SegQueue **queueHead, Segment segment, int winPos, int maxSeqNumSendable) {
 	if(*queueHead == NULL) {
 		*queueHead = newSegQueue(segment, winPos);
@@ -611,6 +599,7 @@ void orderedInsertSegToQueue(SegQueue **queueHead, Segment segment, int winPos, 
 	}
 }
 
+/* Realizza l'invio con perdita */
 int randomSendTo(int sockfd, Segment *segment, struct sockaddr *socketInfo, int addrlenSocketInfo, float loss_prob) {
 	int sendProb = 1 + (rand()/(float)(RAND_MAX)) * 99; // 99 = 100 - 1
     if(sendProb > loss_prob) {
@@ -649,6 +638,13 @@ char* getFileSHA256(char *originalFileName) {
     }
 
     return fileSHA256;
+}
+
+/* Copia una stringa carattere per carattere su un file */
+void cpOnFile(FILE *wrFile, char *content, int len) {       
+    for(int i = 0; i < len; i++) {
+        fputc(content[i], wrFile);
+    }
 }
 
 #endif

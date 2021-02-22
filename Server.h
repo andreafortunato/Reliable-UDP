@@ -1,3 +1,10 @@
+/* 
+    Library for the server.c - FTP on UDP 
+
+    Authors: Enrico D'Alessandro & Andrea Fortunato
+    IIW (A.Y. 2019-2020) at Università di Tor Vergata in Rome.
+*/
+
 #ifndef SERVER_H
 #define SERVER_H
 
@@ -5,7 +12,9 @@
 
 #define NOFILE "File Not Found!"
 
-/* Struttura associata al singolo client */
+/****************************************************** STRUTTURE DATI *******************************************************************/
+
+/* Struttura dati associata ad ogni client connesso al server */
 typedef struct _ClientNode {
 	unsigned int sockfd;					/* Descrittore del socket */
 	char ip[16];							/* IP Address */
@@ -14,39 +23,40 @@ typedef struct _ClientNode {
 	int addrlenSocket;
 	unsigned int serverPort;				/* Porta del server riservata al Client */
 
-	// unsigned int lastSeqClient;				/* Ultimo numero di sequenza ricevuto dal Client */
-	// unsigned int lastSeqServer;				/* Ultimo numero di sequenza inviato al Client */
-
 	pthread_mutex_t lockTid;
 	pthread_t handTid;						/* ID del Thread Handshake */
 	pthread_t sendTid;						/* ID del Thread Send */
 	pthread_t recvTid;						/* ID del Thread Recv */
 	pthread_t timeTid;						/* ID del Thread Timeout */
+	pthread_t consTid;						/* ID del Thread Consume_Segment */
 	int recvDead;
 	int mustDie[4];
 
-	SegQueue *queueHead;
-	double RTO;
-	struct timeval segTimeout[WIN_SIZE];
+	SegQueue *queueHead;					/* Puntatore alla testa della coda di ritrasmissione */
+	double RTO;								/* variable RTO */
+	struct timeval segTimeout[WIN_SIZE];	
 	struct timeval segRtt[WIN_SIZE];
 	int sendQueue;
-	Segment sndWindow[WIN_SIZE];
-	Segment rcvWindow[WIN_SIZE];
-	int segToSend[WIN_SIZE];
-	int segSent[WIN_SIZE];
-	int rcvWinFlag[WIN_SIZE];
+	Segment sndWindow[WIN_SIZE];			/* Finestra di invio */
+	Segment rcvWindow[WIN_SIZE];			/* Finestra di ricezione */
+	int segToSend[WIN_SIZE];				/* Segmenti da inviare */
+	int segSent[WIN_SIZE];					/* Segmenti inviati */
+	int rcvWinFlag[WIN_SIZE];				
 	int rttFlag[WIN_SIZE];
 	int sndWinPos;
 	int sndPos;	
-	
-	FILE *fileDescriptor;
+	int canSendAck;
+	int lastAckNumSent;						/* Ultimo ack inviato */
+	int totalSegsRcv;						/* Segmenti totali ricevuti */
 
-	pthread_mutex_t queueLock;
-	pthread_rwlock_t slideLock;	
+	FILE *fileDescriptor;					/* Descrittore del file per apertura in lettura/scrittura di un file */
+
+	pthread_mutex_t queueLock;				/* Mutex per l'accesso alla coda di ritrasmissione */
+	pthread_rwlock_t slideLock;				/* Semaforo R/W per consentire lo slide delle finestre di invio e ricezione */
+	pthread_mutex_t consumeLock;			/* Mutex per la scrittura dei segmenti su file */
 
 	struct _ClientNode *next;				/* Puntatore a ClientNode successivo */
 } ClientNode;
-
 
 /* Struttura per il passaggio di dati alla creazione di un nuovo thread */
 typedef struct _ThreadArgs {
@@ -54,16 +64,16 @@ typedef struct _ThreadArgs {
 	Segment segment;
 } ThreadArgs;
 
+/* Struttura dati associata ai file presenti sul server */
 typedef struct _FileNode {
 	char *fileName;
-	int available;
 
 	struct _FileNode *next;
 } FileNode;
 
+/*****************************************************************************************************************************************/
 
-/* ************************************************************************************************************************************* */
-
+/* Creazione di un nuovo nodo file */
 FileNode* newFileNode(char *fileName) {
 	FileNode *file = (FileNode *) malloc(sizeof(FileNode));
 	if(file != NULL)
@@ -76,7 +86,6 @@ FileNode* newFileNode(char *fileName) {
 			printf("Error while trying to \"malloc\" a new fileName!\nClosing...\n");
 			exit(-1);
 		}
-		file -> available = 0;
 	} else {
 		printf("Error while trying to \"malloc\" a new FileNode!\nClosing...\n");
 		exit(-1);
@@ -85,7 +94,7 @@ FileNode* newFileNode(char *fileName) {
 	return file;
 }
 
-
+/* Creazione di un nuovo nodo threadArgs */
 ThreadArgs* newThreadArgs(Sockaddr_in clientSocket, Segment segment) {
 	ThreadArgs *threadArgs = (ThreadArgs *) malloc(sizeof(ThreadArgs));
 	if(threadArgs != NULL)
@@ -118,6 +127,7 @@ ClientNode* newNode(unsigned int sockfd, struct sockaddr_in clientSocket, pthrea
 		node -> sendTid = -1;
 		node -> recvTid = -1;
 		node -> timeTid = -1;
+		node -> consTid = -1; 
 		node -> recvDead = 0;
 
 		for (int i=0; i<4; i++)
@@ -134,8 +144,10 @@ ClientNode* newNode(unsigned int sockfd, struct sockaddr_in clientSocket, pthrea
 	    }
 		node -> sndWinPos = 0;
 		node -> sndPos = 0;
-		
+		node -> canSendAck = 0;
+		node -> lastAckNumSent = 1;
 		node -> fileDescriptor = NULL;
+        node -> totalSegsRcv = 0;
 
 		/* Inizializzazione semafori */
 		if(pthread_mutex_init(&(node -> lockTid), NULL) != 0) {
@@ -150,6 +162,10 @@ ClientNode* newNode(unsigned int sockfd, struct sockaddr_in clientSocket, pthrea
             printf("Failed slideLock semaphore initialization.\n");
             exit(-1);
         }        
+        if(pthread_mutex_init(&(node -> consumeLock), NULL) != 0) {
+        	printf("Failed consumeLock semaphore initialization.\n");
+            exit(-1);
+        }
 
 		node -> next = NULL;
 	} else {
@@ -160,21 +176,7 @@ ClientNode* newNode(unsigned int sockfd, struct sockaddr_in clientSocket, pthrea
 	return node;
 }
 
-/* Informazioni sull'orario */
-char *getTime() {
-	time_t dateTime;
-	struct tm* time_info;
-	char *time_buff = malloc(32);
-
-
-	time(&dateTime);
-	time_info = localtime(&dateTime);
-	strftime(time_buff, 32, "%H:%M:%S", time_info);
-
-	return time_buff;
-}
-
-/* TEMP - Stampa lista */
+/* Stampa lista client */
 void printList(ClientNode *clientList) {
 	while(clientList != NULL)
 	{
@@ -193,7 +195,6 @@ void printList(ClientNode *clientList) {
 
 /* Chiusura socket, flag 'free' pagina logica (memoria riutilizzabile) ed azzeramento del suo contenuto */
 void empty(ClientNode *client) {
-	// printf("Porta da eliminare: %d\n", client->clientPort);
 
 	close(client -> sockfd);
 
@@ -209,6 +210,14 @@ void empty(ClientNode *client) {
     if(pthread_rwlock_destroy(&(client -> slideLock)) != 0) {
         printf("Failed (client -> slideLock) semaphore destruction.\n");
         exit(-1);
+    }
+    if(pthread_mutex_destroy(&(client -> consumeLock)) != 0) {
+        printf("Failed consumeLock semaphore destruction.\n");
+        exit(-1);
+    }
+
+    if(client -> fileDescriptor != NULL) {
+    	fclose(client -> fileDescriptor);
     }
 
     bzero(client, sizeof(ClientNode));
@@ -228,8 +237,6 @@ void addClientNode(ClientNode **clientList, ClientNode *newClient) {
 
 /* Elimina un client dalla lista clientList */
 void deleteClientNode(ClientNode **clientList, ClientNode *client) {
-	// printf("\n\n---> STAMPA LISTA PRE DELETE <---\n\n");
- //    printList(*clientList);
 
 	ClientNode *current, *prev;
 
@@ -241,7 +248,6 @@ void deleteClientNode(ClientNode **clientList, ClientNode *client) {
 	} else {
 		prev = current;
 
-		// while((current->sockfd) != (client->sockfd) || (current->clientPort) != (client->clientPort)){
 		while(current != client){
 			prev = current;
 			current = current -> next;
@@ -254,12 +260,9 @@ void deleteClientNode(ClientNode **clientList, ClientNode *client) {
 	}
 
 	empty(client);
-
-	// printf("\n\n---> STAMPA LISTA POST DELETE <---\n\n");
- //    printList(*clientList);
 }
 
-/* Genera la lista dei file presenti della directory corrente del server, escluso
+/* Genera la lista dei file presenti nella directory corrente del server, escluso
    il suo file eseguibile e tutte le eventuali sottocartelle. */
 void getFileList(FileNode **fileListHead, char *serverFileName) {
 
@@ -280,7 +283,6 @@ void getFileList(FileNode **fileListHead, char *serverFileName) {
 
     while (fgets(fileName, 256, fp) != NULL){
     	fileNode = newFileNode(fileName);
-    	fileNode -> available = 1;
 
     	if(*fileListHead == NULL){
     		*fileListHead = fileNode;
@@ -343,18 +345,16 @@ void addFile(FileNode** fileListHead, char* fileName) {
     }
 }
 
-
 /* Ritorna il nome originale del file 'clientFileName' se questo esiste, NULL altrimenti */
-char *fileExists(FileNode *fileListHead, char *clientFileName/*, char* up_down*/) {
+char *fileExists(FileNode *fileListHead, char *clientFileName) {
+
 	char *originalFilename = NULL;
 	char fileToSearch[strlen(clientFileName)+2];
 	sprintf(fileToSearch, "%s\n", clientFileName);
-	// strcpy(fileToSearch, clientFileName);
-	// strcat(fileToSearch, "\n");
 
 
 	while(fileListHead != NULL) {
-		if(strcasecmp(fileToSearch, fileListHead -> fileName) == 0 && (fileListHead -> available == 1)) {
+		if(strcasecmp(fileToSearch, fileListHead -> fileName) == 0) {
 			originalFilename = malloc(strlen(fileListHead -> fileName));
 			strcpy(originalFilename, fileListHead -> fileName);
 			originalFilename[strlen(originalFilename)-1] = '\0';
@@ -366,13 +366,8 @@ char *fileExists(FileNode *fileListHead, char *clientFileName/*, char* up_down*/
     return originalFilename;
 }
 
+/* Funzione per la terminazione e join dei thread */
 void pthread_cancelAndWait(ClientNode *client, pthread_t tid) {
-	// if(tid != -1) {
-	// 	pthread_cancel(tid);
-	// 	pthread_join(tid, NULL);
-
-	// 	printf("Cancellato: %ld\n", tid);
-	// }
 
 	pthread_mutex_lock(&(client -> lockTid));
 	if(tid != -1){
@@ -388,14 +383,17 @@ void pthread_cancelAndWait(ClientNode *client, pthread_t tid) {
 		else if(tid == client->recvTid) {
 			client->recvTid = -1;
 		}
+		else if(tid == client->consTid) {
+			client->consTid = -1;
+		}
 
 		pthread_cancel(tid);
 		pthread_join(tid, NULL);
-		printf("Cancellato thread: %ld\n", tid);
 	}
 	pthread_mutex_unlock(&(client -> lockTid));
 }
 
+/* Funzione che controlla la terminazione dei thread */
 void checkIfMustDie(ClientNode *client, int threadNum) {
 	if((client -> mustDie)[threadNum])
 		pthread_exit(NULL);
