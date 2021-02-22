@@ -5,6 +5,7 @@ all:
 
 
 client:
+	mkdir -p ClientDir
 	gcc -g -o ClientDir/client ClientUDP.c -lpthread -Wall -Wno-memset-elt-size
 
 server:
