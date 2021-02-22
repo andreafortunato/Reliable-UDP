@@ -24,6 +24,16 @@
 
 #define bzero(buffer,lenght) (memset((buffer), '\0', (lenght)), (void) 0)
 
+#define ERROR "[\033[1;91mERROR\033[0m] -> "
+#define LIST "[\033[1;94mLIST\033[0m] -> "
+#define DOWNLOAD "[\033[1;93mDOWNLOAD\033[0m] -> "
+#define UPLOAD "[\033[1;92mUPLOAD\033[0m] -> "
+#define INFO "[\033[1;96mINFO\033[0m] -> "
+#define HAND "[\033[1;96mHANDSHAKE\033[0m] -> "
+#define FIN "[\033[1;96mFIN\033[0m] -> "
+#define FINACK "[\033[1;96mFIN (ACK)\033[0m] -> "
+#define TIME "[\033[1;96mTIMEOUT\033[0m] -> "
+
 #define LOSS_PROB 0 		/* Probabiltà di perdita */
 #define WIN_SIZE 10			/* Dimensione finestra */
 

@@ -111,7 +111,7 @@ int main(int argc, char *argv[]) {
     char *ip = malloc(16*sizeof(char));
     if(ip == NULL)
     {
-        wprintf(L"malloc on ip address failed!\n");
+        wprintf(ERROR L"Failed malloc on ip address failed!\n");
         exit(-1);
     }
 
@@ -123,7 +123,7 @@ int main(int argc, char *argv[]) {
     }
 
     if(pthread_mutex_init(&consumeLock, NULL) != 0) {
-        wprintf(L"Failed consumeLock semaphore initialization.\n");
+        wprintf(ERROR L"Failed consumeLock semaphore initialization.\n");
         exit(-1);
     }
 
@@ -140,14 +140,14 @@ int main(int argc, char *argv[]) {
     /* Creazione socket - UDP */
     sockfd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL);
     if (sockfd < 0) {
-        wprintf(L"\nSocket file descriptor not received!\n");
+        wprintf(L"\n" ERROR L"Socket file descriptor not received!\n");
         exit(-1);
     }
 
     Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
     if(rcvSegment == NULL)
     {
-        wprintf(L"Error while trying to \"malloc\" a new Segment!\nClosing...\n");
+        wprintf(ERROR L"Error while trying to \"malloc\" a new Segment!\nClosing...\n");
         exit(-1);
     }
 
@@ -158,20 +158,21 @@ int main(int argc, char *argv[]) {
 
     while (1) {
 
-        wprintf(L"\n\nPID: %d", getpid());
+        if(debug) wprintf(L"\n\n" INFO "PID: %d", getpid());
+        
         choice = clientChoice();
 
         resetData();
 
         clearInBuffer.tv_usec = 50*1000;
         if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &clearInBuffer, sizeof(clearInBuffer)) < 0) {
-            wprintf(L"\nError while setting clearInBuffer\n");
+            wprintf(L"\n" ERROR "While setting clearInBuffer\n");
             exit(-1);
         }
         while(recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket) >= 0);
         clearInBuffer.tv_usec = 0;
         if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &clearInBuffer, sizeof(clearInBuffer)) < 0) {
-            wprintf(L"\nError while setting clearInBuffer\n");
+            wprintf(L"\n" ERROR "While setting clearInBuffer\n");
             exit(-1);
         }
 
@@ -180,7 +181,7 @@ int main(int argc, char *argv[]) {
             case 1:
                 /* Fase di handshake */
                 if(handshake() == -1) {
-                    wprintf(L"\nError during handshake phase\n");
+                    wprintf(L"\n" ERROR "During handshake phase\n");
                     break;  
                 } 
 
@@ -193,7 +194,7 @@ int main(int argc, char *argv[]) {
                 strcpy(isAck, TRUE);
                 if(pthread_create(&finTid, NULL, fin_thread, NULL) != 0)
                 {
-                    wprintf(L"New client thread error\n");
+                    wprintf(ERROR L"New client thread error\n");
                     exit(-1);
                 }
                 pthread_join(finTid, NULL);
@@ -207,7 +208,7 @@ int main(int argc, char *argv[]) {
 
                 /* Fase di handshake */
                 if(handshake() == -1) {
-                    wprintf(L"\nError during handshake phase\n");
+                    wprintf(L"\n" ERROR "During handshake phase\n");
                     break;  
                 } 
 
@@ -220,7 +221,7 @@ int main(int argc, char *argv[]) {
                 strcpy(isAck, TRUE);
                 if(pthread_create(&finTid, NULL, fin_thread, NULL) != 0)
                 {
-                    wprintf(L"New client thread error\n");
+                    wprintf(ERROR L"New client thread error\n");
                     exit(-1);
                 }
                 pthread_join(finTid, NULL);
@@ -234,15 +235,13 @@ int main(int argc, char *argv[]) {
 
                 FILE *fileToUpload = fopen(fileToUploadName, "rb");
                 if(fileToUpload == NULL){
-                    wprintf(L"[\033[1;91mERROR\033[0m] File not found. Check the file name (it is Case Sensitive!)\n");
+                    wprintf(ERROR L"File not found. Check the file name (it is Case Sensitive!)\n");
                     break;
                 }
 
-                wprintf(L"\nWaiting for connection to the server...\n");
-
                 /* Fase di handshake */
                 if(handshake() == -1) {
-                    wprintf(L"\nError during handshake phase\n");
+                    wprintf(L"\n" ERROR "During handshake phase\n");
                     break;  
                 } 
 
@@ -255,13 +254,13 @@ int main(int argc, char *argv[]) {
                     break;
                 }
 
-                wprintf(L"\nUpload completed successfully!\n");
+                wprintf(L"\n" INFO "Upload completed successfully!\n");
                 
                 /* Fase di chiusura */
                 strcpy(isAck, FALSE);
                 if(pthread_create(&finTid, NULL, fin_thread, NULL) != 0)
                 {
-                    wprintf(L"New client thread error\n");
+                    wprintf(ERROR L"New client thread error\n");
                     exit(-1);
                 }
                 pthread_join(finTid, NULL);
@@ -271,7 +270,7 @@ int main(int argc, char *argv[]) {
             case 4:
                 /* Uscita dal programma */
                 if(pthread_mutex_destroy(&consumeLock) != 0) {
-                    wprintf(L"Failed consumeLock semaphore destruction.\n");
+                    wprintf(ERROR L"Failed consumeLock semaphore destruction.\n");
                     exit(-1);
                 }
 
@@ -292,13 +291,14 @@ void ctrl_c_handler() {
     resetTimeout.tv_usec = 0;
     resetTimeout.tv_sec = 0;
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &resetTimeout, sizeof(resetTimeout)) < 0) {
-        wprintf(L"\nError while setting reset-timeout\n");
+        wprintf(L"\n" ERROR "While setting reset-timeout\n");
         exit(-1);
     }
 }
 
 /* Funzione per la gestione della fase di handshake */
 int handshake() {
+    wprintf(L"\nWaiting for connection to the server...\n");
 
     int *tmpIntBuff;
     int countRetransmission = 1;
@@ -314,7 +314,7 @@ int handshake() {
     Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
     if(rcvSegment == NULL)
     {
-        wprintf(L"Error while trying to \"malloc\" a new handshake segment!\nClosing...\n");
+        wprintf(ERROR L"While trying to \"malloc\" a new handshake segment!\nClosing...\n");
         exit(-1);
     } 
     bzero(rcvSegment, sizeof(Segment));   
@@ -351,17 +351,17 @@ int handshake() {
             }
 
             if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &synTimeout, sizeof(synTimeout)) < 0) {
-                wprintf(L"\nError while setting syn-timeout at try n°: %d\n", countRetransmission);
+                wprintf(L"\n" ERROR "While setting syn-timeout at try n°: %d\n", countRetransmission);
                 exit(-1);
             }
         }
 
         /* Invio SYN */
         if(randomSendTo(sockfd, sndSegment, (struct sockaddr*)&mainServerSocket, addrlenMainServerSocket, loss_prob)){
-            //wprintf(L"\n[SYN]: Sent to the server (%s:%d)\n", inet_ntoa(mainServerSocket.sin_addr), ntohs(mainServerSocket.sin_port));
+            if(debug) wprintf(L"\n" HAND "[SYN]: Sent to the server (%s:%d)\n", inet_ntoa(mainServerSocket.sin_addr), ntohs(mainServerSocket.sin_port));
         }
         else{
-            //wprintf(L"\n[SYN]: LOST\n");
+            if(debug) wprintf(L"\n" HAND "[SYN]: LOST\n");
         }
 
         countRetransmission += 1;
@@ -371,12 +371,12 @@ int handshake() {
 
     synTimeout.tv_sec = 0;
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &synTimeout, sizeof(synTimeout)) < 0) {
-        wprintf(L"\nError while setting syn-timeout at try n°: %d\n", countRetransmission);
+        wprintf(L"\n" ERROR "While setting syn-timeout at try n°: %d\n", countRetransmission);
         exit(-1);
     }
 
     /* SYN-ACK ricevuto */
-    // wprintf(L"[SYN-ACK]: Server information: (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
+    if(debug) wprintf(HAND L"[SYN-ACK]: Server information: (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
     
     /* Invio ACK del SYN-ACK */
     int ackNum = atoi(rcvSegment -> seqNum) + 1;
@@ -385,17 +385,17 @@ int handshake() {
     free(tmpIntBuff);
     
     if(randomSendTo(sockfd, sndSegment, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket, loss_prob)){
-        // wprintf(L"[ACK]: Sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
+        if(debug) wprintf(HAND L"[ACK]: Sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
     }
     else {
-        // wprintf(L"\n[ACK]: LOST\n");
+        if(debug) wprintf(L"\n" HAND "[ACK]: LOST\n");
     }
     
     free(rcvSegment);
     free(sndSegment);
 
     /* Fine handshake */
-    // wprintf(L"Handshake terminated!\n\n");
+    if(debug) wprintf(INFO L"Handshake terminated!\n\n");
     return 0;
 }
 
@@ -417,7 +417,7 @@ int list() {
     Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
     if(rcvSegment == NULL)
     {
-        wprintf(L"Error while trying to \"malloc\" a new list rcvsegment!\nClosing...\n");
+        wprintf(ERROR L"While trying to \"malloc\" a new list rcvsegment!\nClosing...\n");
         exit(-1);
     } 
 
@@ -446,7 +446,7 @@ int list() {
                 case 8:
                     requestTimeout.tv_sec = 0;  // Reset del timeout a 0 (= attendi all'infinito)
                     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &requestTimeout, sizeof(requestTimeout)) < 0) {
-                        wprintf(L"\nError while setting fin-timeout at try n°: %d\n", countRetransmission);
+                        wprintf(L"\n" ERROR "While setting fin-timeout at try n°: %d\n", countRetransmission);
                         exit(-1);
                     }
 
@@ -462,17 +462,17 @@ int list() {
             }
 
             if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &requestTimeout, sizeof(requestTimeout)) < 0) {
-                wprintf(L"\nError while setting fin-timeout at try n°: %d\n", countRetransmission);
+                wprintf(L"\n" ERROR "While setting fin-timeout at try n°: %d\n", countRetransmission);
                 exit(-1);
             }
         }
         
         /* Invio SYN */
         if(randomSendTo(sockfd, sndSegment, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket, loss_prob)) {
-            //wprintf(L"\n[LIST]: Request sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
+            if(debug) wprintf(L"\n" LIST "Request sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
         }
         else {
-            //wprintf(L"\n[LIST]: Request operation List lost.\n");
+            if(debug) wprintf(L"\n" LIST "Request operation List lost.\n");
         }
 
         countRetransmission += 1;
@@ -480,7 +480,7 @@ int list() {
 
     requestTimeout.tv_sec = 64;
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &requestTimeout, sizeof(requestTimeout)) < 0) {
-        wprintf(L"\nError while setting fin-timeout at try n°: %d\n", countRetransmission);
+        wprintf(L"\n" ERROR "While setting fin-timeout at try n°: %d\n", countRetransmission);
         exit(-1);
     }
 
@@ -488,7 +488,7 @@ int list() {
 
         lastSeqNumRecv = atoi(rcvSegment -> seqNum);
 
-        //wprintf(L"\nRicevuto pacchetto - (seqNum: %d)\n", atoi(rcvSegment -> seqNum));
+        if(debug) wprintf(L"\n" LIST" Ricevuto pacchetto - (seqNum: %d)\n", atoi(rcvSegment -> seqNum));
 
         pthread_mutex_lock(&consumeLock);
 
@@ -513,7 +513,7 @@ int list() {
             /* Creazione di un thread per la scrittura dei segmenti su disco */
             if(pthread_create(&consumeTid, NULL, thread_consumeFileList, NULL) != 0)
             {
-                wprintf(L"New consumeSegment thread error\n");
+                wprintf(ERROR L"New consumeSegment thread error\n");
                 exit(-1);
             }
         } 
@@ -540,7 +540,7 @@ int list() {
         tmpIntBuff = strToInt(rcvSegment -> seqNum);
         newSegment(&sndSegment, FALSE, lastSeqNumSent, lastAckNumSent, FALSE, TRUE, FALSE, "1", strlen(rcvSegment -> seqNum), tmpIntBuff);
         randomSendTo(sockfd, sndSegment, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket, loss_prob);
-        //wprintf(L"\nInvio ACK (seqNum: %d) - (ackNum: %d) - (seqNumAcked: %d)\n", atoi(sndSegment -> seqNum), atoi(sndSegment -> ackNum), atoi(rcvSegment -> seqNum));
+        if(debug) wprintf(L"\n" LIST "Invio ACK (seqNum: %d) - (ackNum: %d) - (seqNumAcked: %d)\n", atoi(sndSegment -> seqNum), atoi(sndSegment -> ackNum), atoi(rcvSegment -> seqNum));
         free(tmpIntBuff);
 
         if(totalSegsRcv == totalSegs) {
@@ -549,7 +549,7 @@ int list() {
         }
 
         if(recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket) < 0) {
-            wprintf(L"\n[LIST] -> Server dead. List FAILED!\n");
+            wprintf(L"\n" ERROR "Server dead. List FAILED!\n");
 
             if(consumeTid != -1) {
                 pthread_cancel(consumeTid);
@@ -712,7 +712,7 @@ int download(char *filename) {
     Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
     if(rcvSegment == NULL)
     {
-        wprintf(L"Error while trying to \"malloc\" a new download rcvsegment!\nClosing...\n");
+        wprintf(ERROR L"While trying to \"malloc\" a new download rcvsegment!\nClosing...\n");
         exit(-1);
     } 
 
@@ -742,7 +742,7 @@ int download(char *filename) {
                     requestTimeout.tv_sec = 0;  /* Reset del timeout a 0 (= attendi all'infinito) */
 
                     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &requestTimeout, sizeof(requestTimeout)) < 0) {
-                        wprintf(L"\nError while setting request-timeout at try n°: %d\n", countRetransmission);
+                        wprintf(L"\n" ERROR "While setting request-timeout at try n°: %d\n", countRetransmission);
                         exit(-1);
                     }
 
@@ -758,17 +758,17 @@ int download(char *filename) {
             }
 
             if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &requestTimeout, sizeof(requestTimeout)) < 0) {
-                wprintf(L"\nError while setting request-timeout at try n°: %d\n", countRetransmission);
+                wprintf(L"\n" ERROR "While setting request-timeout at try n°: %d\n", countRetransmission);
                 exit(-1);
             }
         }
 
         /* Invio Download Request */
         if(randomSendTo(sockfd, sndSegment, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket, loss_prob)){
-            // wprintf(L"\n[DOWNLOAD]: Sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
+            if(debug) wprintf(L"\n" DOWNLOAD "Request sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
         }
         else{
-            // wprintf(L"\n[DOWNLOAD]: Request operation Download lost\n");
+            if(debug) wprintf(L"\n" DOWNLOAD "Request operation Download lost\n");
         }
 
         countRetransmission += 1;
@@ -778,7 +778,7 @@ int download(char *filename) {
     if(atoi(rcvSegment -> eotBit) == 1 && atoi(rcvSegment -> seqNum) == 1) {
         requestTimeout.tv_sec = 0;
         if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &requestTimeout, sizeof(requestTimeout)) < 0) {
-            wprintf(L"\nError while setting request-timeout at try n°: %d\n", countRetransmission);
+            wprintf(L"\n" ERROR "While setting request-timeout at try n°: %d\n", countRetransmission);
             exit(-1);
         }
 
@@ -791,7 +791,7 @@ int download(char *filename) {
         free(sndSegment);
         free(rcvSegment);
 
-        wprintf(L"[\033[1;91mERROR\033[0m] File not found, please try again!\n");
+        wprintf(ERROR L"File not found, please try again!\n");
 
         return 0;
     }
@@ -800,12 +800,12 @@ int download(char *filename) {
        server si è disconnesso */
     requestTimeout.tv_sec = 64; 
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &requestTimeout, sizeof(requestTimeout)) < 0) {
-        wprintf(L"\nError while setting request-timeout at try n°: %d\n", countRetransmission);
+        wprintf(L"\n" ERROR "While setting request-timeout at try n°: %d\n", countRetransmission);
         exit(-1);
     }
 
-    wprintf(L"\nReceiving file...\n");
-    wprintf(L"\nDownload Speed\t Average Speed\t Bytes\n");
+    wprintf(L"\n" INFO "Receiving file...\n");
+    wprintf(L"\n\033[1;93mDownload Speed\t Average Speed\t Bytes\033[0m\n");
     wprintf(L"0.00kB/s\t 0.00kB/s\t 0\n\n");
 
     wprintf(L" %lc", 0x258e);
@@ -820,7 +820,7 @@ int download(char *filename) {
         
         lastSeqNumRecv = atoi(rcvSegment -> seqNum);
 
-        //wprintf(L"\nRicevuto pacchetto - (seqNum: %d)\n", atoi(rcvSegment -> seqNum));
+        if(debug) wprintf(L"\n" DOWNLOAD "Ricevuto pacchetto - (seqNum: %d)\n", atoi(rcvSegment -> seqNum));
 
         pthread_mutex_lock(&consumeLock);
 
@@ -855,7 +855,7 @@ int download(char *filename) {
             /* Creazione di un thread per la scrittura dei segmenti su disco */
             if(pthread_create(&consumeTid, NULL, thread_consumeSegment, (void *)filename) != 0)
             {
-                wprintf(L"New consumeSegment thread error\n");
+                wprintf(ERROR L"New consumeSegment thread error\n");
                 exit(-1);
             }
         } 
@@ -882,7 +882,7 @@ int download(char *filename) {
         tmpIntBuff = strToInt(rcvSegment -> seqNum);
         newSegment(&sndSegment, FALSE, lastSeqNumSent, lastAckNumSent, FALSE, TRUE, FALSE, "2", strlen(rcvSegment -> seqNum), tmpIntBuff);
         randomSendTo(sockfd, sndSegment, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket, loss_prob);
-        //wprintf(L"\nInvio ACK (seqNum: %d) - (ackNum: %d) - (seqNumAcked: %d)\n", atoi(sndSegment -> seqNum), atoi(sndSegment -> ackNum), atoi(rcvSegment -> seqNum));
+        if(debug) wprintf(L"\n" DOWNLOAD "Invio ACK (seqNum: %d) - (ackNum: %d) - (seqNumAcked: %d)\n", atoi(sndSegment -> seqNum), atoi(sndSegment -> ackNum), atoi(rcvSegment -> seqNum));
         free(tmpIntBuff);
 
         if(totalSegsRcv == totalSegs) {
@@ -891,7 +891,7 @@ int download(char *filename) {
         }
 
         if(recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket) < 0) {
-            wprintf(L"\n[DOWNLOAD] -> Server dead. Download FAILED!\n");
+            wprintf(L"\n" ERROR "Server dead. Download FAILED!\n");
 
             if(consumeTid != -1) {
                 pthread_cancel(consumeTid);
@@ -973,7 +973,7 @@ void *thread_consumeSegment(void *filename) {
             /* Corretta */
             wprintf(L"\033[2A\033[2K\033[100D%.2fkB/s\t %.2fkB/s\t %d/%d\033[2B\033[100D", averageSpeed, bytesRecv/elapsedTime(tvDownloadTime), (consumedSegments*100)/(float)(totalSegs-1), bytesRecv, totalBytes);
             printDownloadStatusBar(bytesRecv, totalBytes, &oldHalfPercentage);
-            wprintf(L"\033[100D\033[%dC\033[0K%.2f%%", 64, (consumedSegments*100)/(float)(totalSegs-1));
+            wprintf(L"\033[100D\033[%dC\033[0K\033[1;93m%.2f%%\033[0m", 54, (consumedSegments*100)/(float)(totalSegs-1));
 
             speedElapsTime = elapsedTime(partialDownloadSpeed);
             if(speedElapsTime > 500) {
@@ -1003,16 +1003,16 @@ void *thread_consumeSegment(void *filename) {
 
                 pthread_mutex_unlock(&consumeLock);
 
-                wprintf(L"\n\nDownload time: %.2f sec", elapsedTime(tvDownloadTime)/1000);
+                wprintf(L"\n\n" INFO "Download time: %.2f sec", elapsedTime(tvDownloadTime)/1000);
 
-                wprintf(L"\nCalculating SHA256...");
+                wprintf(L"\n" INFO "Calculating SHA256...");
 
                 currentFileSHA256 = getFileSHA256(filename);
 
                 if(strcasecmp(currentFileSHA256, originalFileSHA256) == 0)
-                    wprintf(L"\rDownload completed successfully!\nSHA256: %s\n", currentFileSHA256);
+                    wprintf(L"\r" INFO "Download completed successfully!\nSHA256: %s\n", currentFileSHA256);
                 else
-                    wprintf(L"\rThere was an error, download gone wrong!\nOriginal SHA256: %s\n Current SHA256: %s\n", originalFileSHA256, currentFileSHA256);
+                    wprintf(L"\r" ERROR "There was an error, download gone wrong!\nOriginal SHA256: %s\n Current SHA256: %s\n", originalFileSHA256, currentFileSHA256);
 
                 pthread_exit(0);
             }
@@ -1059,26 +1059,26 @@ int upload(FILE *fileToUpload) {
     Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
     if(rcvSegment == NULL)
     {
-        wprintf(L"Error while trying to \"malloc\" a new upload rcvsegment!\nClosing...\n");
+        wprintf(ERROR L"While trying to \"malloc\" a new upload rcvsegment!\nClosing...\n");
         exit(-1);
     } 
 
     ret = pthread_create(&timeTid, NULL, timeout_thread, NULL);
     if(ret != 0)
     {
-        wprintf(L"New timeout thread error\n");
+        wprintf(ERROR L"New timeout thread error\n");
         exit(-1);
     }
     ret = pthread_create(&sendTid, NULL, continuous_send_thread, NULL);
     if(ret != 0)
     {
-        wprintf(L"New continuous send thread error\n");
+        wprintf(ERROR L"New continuous send thread error\n");
         exit(-1);
     }
     ret = pthread_create(&recvTid, NULL, continuous_recv_thread, NULL);
     if(ret != 0)
     {
-        wprintf(L"New continuous recv thread error\n");
+        wprintf(ERROR L"New continuous recv thread error\n");
         exit(-1);
     }
 
@@ -1094,7 +1094,7 @@ int upload(FILE *fileToUpload) {
        server si è disconnesso */
     requestTimeout.tv_sec = 64; 
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &requestTimeout, sizeof(requestTimeout)) < 0) {
-        wprintf(L"\nError while setting request-timeout at try n°: %d\n", countRetransmission);
+        wprintf(L"\n" ERROR "While setting request-timeout at try n°: %d\n", countRetransmission);
         exit(-1);
     }
 
@@ -1145,7 +1145,7 @@ int upload(FILE *fileToUpload) {
         sndWindow[sndWinPos-1] = *sndSegment;
         segToSend[sndWinPos-1] = 1;
 
-        //wprintf(L"\n[UPLOAD] -> Caricato pacchetto: (seqNum: %d) - (sndWinPos: %d)\n", atoi(sndSegment -> seqNum), sndWinPos-1);
+        if(debug) wprintf(L"\n" UPLOAD "Caricato pacchetto: (seqNum: %d) - (sndWinPos: %d)\n", atoi(sndSegment -> seqNum), sndWinPos-1);
 
         if(pthread_rwlock_unlock(&slideLock) != 0) {
             wprintf(L"%d : %s\n", errno, strerror(errno));
@@ -1153,7 +1153,7 @@ int upload(FILE *fileToUpload) {
         }
     }
 
-    //wprintf(L"Fine caricamento pacchetti\n");
+    if(debug) wprintf(UPLOAD L"Fine caricamento pacchetti\n");
     fclose(fileToUpload);
     fileToUpload = NULL;
 
@@ -1190,7 +1190,7 @@ void *timeout_thread() {
 
                 segTimeout[timeoutPos] = tv;
 
-                // wprintf("\n[TIMEOUT] -> Timeout scaduto: (seqNum: %d) - (timeoutPos: %d)\n", atoi(sndWindow[timeoutPos].seqNum), timeoutPos);
+                if(debug) wprintf(L"\n" TIME "Timeout scaduto: (seqNum: %d) - (timeoutPos: %d)\n", atoi(sndWindow[timeoutPos].seqNum), timeoutPos);
 
                 maxSeqNumSendable = (atoi(sndWindow[0].seqNum) + WIN_SIZE-2)%(maxSeqNum) + 1;
                 orderedInsertSegToQueue(&queueHead, sndWindow[timeoutPos], timeoutPos, maxSeqNumSendable);
@@ -1236,10 +1236,10 @@ void *continuous_send_thread() {
             pthread_mutex_lock(&queueLock);
 
             if(randomSendTo(sockfd, &(queueHead -> segment), (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket, loss_prob) == 1) {
-                // wprintf(L"\n[RAND_SENDTO-QUEUE] -> pacchetto inviato seqNum: "); //wprintf(L"%d\n", atoi((queueHead -> segment).seqNum));
+                if(debug) wprintf(L"\n" UPLOAD "[RAND_SENDTO-QUEUE] -> pacchetto inviato seqNum: %d\n", atoi((queueHead -> segment).seqNum));
             }
             else {
-                // wprintf(L"\n[RAND_SENDTO-QUEUE] -> pacchetto perso seqNum: "); wprintf(L"%d\n", atoi((queueHead -> segment).seqNum));
+                if(debug) wprintf(L"\n" UPLOAD "[RAND_SENDTO-QUEUE] -> pacchetto perso seqNum: %d\n", atoi((queueHead -> segment).seqNum));
             }
 
             /* Imposta il nuovo timestamp */
@@ -1278,10 +1278,10 @@ void *continuous_send_thread() {
         gettimeofday(&segRtt[sndPos], NULL);
         
         if(randomSendTo(sockfd, &(sndWindow[sndPos]), (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket, loss_prob) == 1) {
-            //wprintf(L"\n[RAND_SENDTO] -> pacchetto inviato seqNum: %d - (sndPos: %d) - (cmdType: %s)\n", atoi(sndWindow[sndPos].seqNum), sndPos, sndWindow[sndPos].cmdType);
+            if(debug) wprintf(L"\n" UPLOAD "[RAND_SENDTO] -> pacchetto inviato seqNum: %d - (sndPos: %d) - (cmdType: %s)\n", atoi(sndWindow[sndPos].seqNum), sndPos, sndWindow[sndPos].cmdType);
         }
         else {
-            //wprintf(L"\n[RAND_SENDTO] -> pacchetto perso seqNum: %d - (sndPos: %d)\n", atoi(sndWindow[sndPos].seqNum), sndPos);
+            if(debug) wprintf(L"\n" UPLOAD "[RAND_SENDTO] -> pacchetto perso seqNum: %d - (sndPos: %d)\n", atoi(sndWindow[sndPos].seqNum), sndPos);
         }
         
         /* Impostiamo il timestamp per il calcolo del timeout */
@@ -1309,7 +1309,7 @@ void *continuous_recv_thread() {
     Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
     if(rcvSegment == NULL)
     {
-        wprintf(L"Error while trying to \"malloc\" a new rcvSegment!\nClosing...\n");
+        wprintf(ERROR L"While trying to \"malloc\" a new rcvSegment!\nClosing...\n");
         exit(-1);
     }
 
@@ -1331,7 +1331,7 @@ void *continuous_recv_thread() {
     repeatTimeout.tv_usec = 100*1000;
 
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &repeatTimeout, sizeof(repeatTimeout)) < 0) {
-        wprintf(L"\nError while setting repeatTimeout-timeout\n");
+        wprintf(L"\n" ERROR "While setting repeatTimeout-timeout\n");
         exit(-1);
     }
 
@@ -1339,12 +1339,11 @@ void *continuous_recv_thread() {
     
     while(1) {
 
-        wprintf(L"\rUpload in progress...");
+        if(debug==0) wprintf(L"\r" INFO "Upload in progress...");
 
         if(recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket) < 0) {
             if(elapsedTime(deadLineTimeout) > 60*1000) {
-                wprintf(L"RECV FALLITA\n");
-                wprintf(L"Ora termino\n");
+                wprintf(ERROR L"Server dead. Upload FAILED!\n");
                 recvDead = 1;
                 pthread_exit(NULL);
             }
@@ -1356,13 +1355,13 @@ void *continuous_recv_thread() {
         tmpStrBuff = intToStr(rcvSegment -> msg, atoi(rcvSegment -> lenMsg));
         rcvAck = atoi(rcvSegment -> ackNum);
         rcvAckedSeq = atoi(tmpStrBuff);
-        // wprintf(L"\n[RECV] -> Ricevuto ACK: (seqNum: %d) - (ackNum: %d) - (seqNumAcked: %d)\n", atoi(rcvSegment -> seqNum), rcvAck, rcvAckedSeq);
+        if(debug) wprintf(L"\n" UPLOAD "Ricevuto ACK: (seqNum: %d) - (ackNum: %d) - (seqNumAcked: %d)\n", atoi(rcvSegment -> seqNum), rcvAck, rcvAckedSeq);
         free(tmpStrBuff);
 
         /* Se l'ack ricevuto ha il eot bit impostato ad 1 allora il server ha ricevuto tutto e
            ha chiesto la chiusura della connessione */
         if(atoi(rcvSegment -> eotBit) == 1) {
-            //wprintf(L"\n[RECV] -> Ricevuto pacchetto di FIN: (seqNum: %d) - (ackNum: %d)\n", atoi(rcvSegment -> seqNum), rcvAck);
+            if(debug) wprintf(L"\n" UPLOAD "[RECV] -> Ricevuto pacchetto di FIN: (seqNum: %d) - (ackNum: %d)\n", atoi(rcvSegment -> seqNum), rcvAck);
             mustDie[SEND] = 1;
             mustDie[TIMEOUT] = 1;
             pthread_join(sendTid, NULL);
@@ -1392,7 +1391,7 @@ void *continuous_recv_thread() {
                     /* Meccanismo del Fast Retransmit: aggiunta del segmento in testa alla coda di ritrasmissione */
                     if(++countAck == 3) {
                         pthread_rwlock_wrlock(&slideLock);
-                        // wprintf(L"\n[RECV] -> Fast Retransmit for seqNum: %d\n", rcvAck);
+                        if(debug) wprintf(L"\n" UPLOAD "[RECV] -> Fast Retransmit for seqNum: %d\n", rcvAck);
                         countAck = 0;
                         if(queueHead == NULL || atoi((queueHead -> segment).seqNum) != rcvAck) {
                             sendQueue = 0; // Stoppiamo il send durante la trasmissione della coda
@@ -1504,11 +1503,11 @@ void *fin_thread() {
     Segment *rcvSegment = (Segment*)malloc(sizeof(Segment));
     if(rcvSegment == NULL)
     {
-        wprintf(L"Error while trying to \"malloc\" a new handshake segment!\nClosing...\n");
+        wprintf(ERROR L"While trying to \"malloc\" a new handshake segment!\nClosing...\n");
         exit(-1);
     }
 
-    wprintf(L"\n\nDisconnecting from the server... Press CTRL+C to force disconnection\n");
+    wprintf(L"\n" INFO "Disconnecting from the server... Press CTRL+C to force disconnection\n");
 
     /* Timer associato al FIN */
     struct timeval finTimeout;
@@ -1534,7 +1533,7 @@ void *fin_thread() {
                     finTimeout.tv_sec = 0;  // Reset del timeout a 0 (= attendi all'infinito)
 
                     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &finTimeout, sizeof(finTimeout)) < 0) {
-                        wprintf(L"\nError while setting fin-timeout at try n°: %d\n", countRetransmission);
+                        wprintf(L"\n" ERROR "While setting fin-timeout at try n°: %d\n", countRetransmission);
                         exit(-1);
                     }
 
@@ -1551,24 +1550,24 @@ void *fin_thread() {
             }
 
             if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &finTimeout, sizeof(finTimeout)) < 0) {
-                wprintf(L"\nError while setting fin-timeout at try n°: %d\n", countRetransmission);
+                wprintf(L"\n" ERROR "While setting fin-timeout at try n°: %d\n", countRetransmission);
                 exit(-1);
             }
 
             /* Invio SYN */
             if(randomSendTo(sockfd, sndSegment, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket, loss_prob))
                 if(atoi(isAck) == 1) {
-                    // wprintf(L"\n[FIN (ACK)]: Sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
+                    if(debug) wprintf(L"\n" FINACK "Sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
                 }
                 else{
-                    // wprintf(L"\n[FIN]: Sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
+                    if(debug) wprintf(L"\n" FIN "Sent to the server (%s:%d)\n", inet_ntoa(operationServerSocket.sin_addr), ntohs(operationServerSocket.sin_port));
                 }
             else
                 if(atoi(isAck) == 1){
-                    // wprintf(L"\n[FIN (ACK)]: LOST\n");
+                    if(debug) wprintf(L"\n" FINACK "LOST\n");
                 }
                 else{
-                    // wprintf(L"\n[FIN]: LOST\n");
+                    if(debug) wprintf(L"\n" FIN "LOST\n");
                 }
 
             countRetransmission += 1;
@@ -1579,16 +1578,16 @@ void *fin_thread() {
 
     finTimeout.tv_sec = 0;
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &finTimeout, sizeof(finTimeout)) < 0) {
-        wprintf(L"\nError while setting fin-timeout at try n°: %d\n", countRetransmission);
+        wprintf(L"\n" ERROR "While setting fin-timeout at try n°: %d\n", countRetransmission);
         exit(-1);
     }
 
     if(atoi(rcvSegment -> finBit) != 1) {
-        // wprintf(L"\n\n[FIN]: ACK del FIN ricevuto dal server\n");
+        if(debug) wprintf(L"\n" FIN "ACK del FIN ricevuto dal server\n");
 
         finTimeout.tv_sec = 30; 
         if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &finTimeout, sizeof(finTimeout)) < 0) {
-            wprintf(L"\nError while setting fin-timeout at try n°: %d\n", countRetransmission);
+            wprintf(L"\n" ERROR "While setting fin-timeout at try n°: %d\n", countRetransmission);
             exit(-1);
         }
         finTimeout.tv_sec = 0;
@@ -1596,11 +1595,11 @@ void *fin_thread() {
         /* Ricezione FIN del Server */
         if(recvSegment(sockfd, rcvSegment, &operationServerSocket, &addrlenOperationServerSocket) < 0) {
             if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &finTimeout, sizeof(finTimeout)) < 0) {
-                wprintf(L"\nError while setting fin-timeout\n");
+                wprintf(L"\n" ERROR "While setting fin-timeout\n");
                 exit(-1);
             }
 
-            wprintf(L"\nServer unreachable, disconnected...\n");
+            wprintf(L"\n" ERROR "Server unreachable, disconnected...\n");
 
             signal(SIGINT, SIG_DFL);
 
@@ -1611,11 +1610,11 @@ void *fin_thread() {
         }
         
         if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &finTimeout, sizeof(finTimeout)) < 0) {
-            wprintf(L"\nError while setting fin-timeout\n");
+            wprintf(L"\n" ERROR "While setting fin-timeout\n");
             exit(-1);
         }
 
-        // wprintf(L"\n\n[FIN]: FIN del server ricevuto\n");
+        if(debug) wprintf(L"\n" FIN "FIN del server ricevuto\n");
     }
 
     /* Invio ACK del FIN del Server */
@@ -1624,9 +1623,9 @@ void *fin_thread() {
     newSegment(&sndSegment, FALSE, 2, lastAckNumSent, FALSE, TRUE, FALSE, EMPTY, 1, tmpIntBuff);
     free(tmpIntBuff);
     randomSendTo(sockfd, sndSegment, (struct sockaddr*)&operationServerSocket, addrlenOperationServerSocket, loss_prob);
-    // wprintf(L"[FIN]: ACK del FIN inviato al server\n");
+    if(debug) wprintf(FIN L"ACK del FIN inviato al server\n");
 
-    wprintf(L"\nSuccessfully disconnected from Server\n");
+    wprintf(L"\n" INFO "Successfully disconnected from Server\n");
 
     signal(SIGINT, SIG_DFL);
 

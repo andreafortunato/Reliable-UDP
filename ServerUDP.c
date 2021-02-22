@@ -287,10 +287,10 @@ void *client_thread_handshake(void *args) {
 
     /* Invio SYN-ACK */
     if(randomSendTo(newClient -> sockfd, synAck, (struct sockaddr*)&(newClient -> connection), (newClient -> addrlenSocket), loss_prob)){
-        //printf("SYN-ACK sent to the client (%s:%d)\n", newClient -> ip, newClient -> clientPort);
+        if(debug) printf("SYN-ACK sent to the client (%s:%d)\n", newClient -> ip, newClient -> clientPort);
     }
     else {
-        //printf("SYN-ACK LOST\n");
+        if(debug) printf("SYN-ACK LOST\n");
     }
     
     free(synAck);
@@ -320,7 +320,7 @@ void *client_thread_handshake(void *args) {
         if(recvSegment(newClient -> sockfd, rcvSegment, &(newClient -> connection), &(newClient -> addrlenSocket)) < 0 || atoi(rcvSegment -> ackBit) != 1) 
             continue;
 
-        // printf("\n[SYN] -> Ricevuta richiesta operazione: %d\n", atoi(rcvSegment -> cmdType));
+        if(debug) printf("\n[SYN] -> Ricevuta richiesta operazione: %d\n", atoi(rcvSegment -> cmdType));
 
         break;       
     }
@@ -801,6 +801,8 @@ void *timeout_thread(void *args) {
 
                 (client -> segTimeout)[timeoutPos] = tv;
 
+                if(debug) printf("\n" TIME "Timeout scaduto: (seqNum: %d) - (timeoutPos: %d)\n", atoi((client -> sndWindow)[timeoutPos].seqNum), timeoutPos);
+
                 maxSeqNumSendable = (atoi((client -> sndWindow)[0].seqNum) + WIN_SIZE-2)%(maxSeqNum) + 1;
                 orderedInsertSegToQueue(&(client -> queueHead), (client -> sndWindow)[timeoutPos], timeoutPos, maxSeqNumSendable);
 
@@ -847,10 +849,10 @@ void *continuous_send_thread(void *args) {
             pthread_mutex_lock(&(client -> queueLock));
 
             if(randomSendTo(client -> sockfd, &((client -> queueHead) -> segment), (struct sockaddr*)&(client -> connection), (client -> addrlenSocket), loss_prob) == 1) {
-                // printf("\n[RAND_SENDTO-QUEUE] -> pacchetto inviato seqNum: "); //printf("%d\n", atoi(((client -> queueHead) -> segment).seqNum));
+                if(debug) printf("\n[RAND_SENDTO-QUEUE] -> pacchetto inviato seqNum: %d\n", atoi(((client -> queueHead) -> segment).seqNum));
             }
             else {
-                // printf("\n[RAND_SENDTO-QUEUE] -> pacchetto perso seqNum: "); printf("%d\n", atoi(((client -> queueHead) -> segment).seqNum));
+                if(debug) printf("\n[RAND_SENDTO-QUEUE] -> pacchetto perso seqNum: %d\n", atoi(((client -> queueHead) -> segment).seqNum));
             }
 
             /* Imposta il nuovo timestamp */
@@ -889,10 +891,10 @@ void *continuous_send_thread(void *args) {
         gettimeofday(&(client -> segRtt)[(client -> sndPos)], NULL);
         
         if(randomSendTo(client -> sockfd, &((client -> sndWindow)[(client -> sndPos)]), (struct sockaddr*)&(client -> connection), (client -> addrlenSocket), loss_prob) == 1) {
-            // printf("\n[RAND_SENDTO] -> pacchetto inviato seqNum: %d - (sndPos: %d)\n", atoi((client -> sndWindow)[(client -> sndPos)].seqNum), (client -> sndPos));
+            if(debug) printf("\n[RAND_SENDTO] -> pacchetto inviato seqNum: %d - (sndPos: %d)\n", atoi((client -> sndWindow)[(client -> sndPos)].seqNum), (client -> sndPos));
         }
         else {
-            // printf("\n[RAND_SENDTO] -> pacchetto perso seqNum: %d - (sndPos: %d)\n", atoi((client -> sndWindow)[(client -> sndPos)].seqNum), (client -> sndPos));
+            if(debug) printf("\n[RAND_SENDTO] -> pacchetto perso seqNum: %d - (sndPos: %d)\n", atoi((client -> sndWindow)[(client -> sndPos)].seqNum), (client -> sndPos));
         }
         
         /* Impostiamo il timestamp per il calcolo del timeout */
@@ -955,9 +957,7 @@ void *continuous_recv_thread(void *args){
 
         if(recvSegment(client -> sockfd, rcvSegment, &(client -> connection), &(client -> addrlenSocket)) < 0) {
             if(elapsedTime(deadLineTimeout) > 60*1000) {
-                printf("RECV FALLITA\n");
                 *joinRet = -1;
-                printf("Ora termino\n");
                 client -> recvDead = 1;
                 pthread_exit(joinRet);
             }
@@ -969,13 +969,13 @@ void *continuous_recv_thread(void *args){
         tmpStrBuff = intToStr(rcvSegment -> msg, atoi(rcvSegment -> lenMsg));
         rcvAck = atoi(rcvSegment -> ackNum);
         rcvAckedSeq = atoi(tmpStrBuff);
-        // printf("\n[RECV] -> Ricevuto ACK: (seqNum: %d) - (ackNum: %d) - (seqNumAcked: %d)\n", atoi(rcvSegment -> seqNum), rcvAck, rcvAckedSeq);
+        if(debug) printf("\n[RECV] -> Ricevuto ACK: (seqNum: %d) - (ackNum: %d) - (seqNumAcked: %d)\n", atoi(rcvSegment -> seqNum), rcvAck, rcvAckedSeq);
         free(tmpStrBuff);
 
         /* Se l'ack ricevuto ha il fin bit impostato ad 1 allora il client ha ricevuto tutto e
            ha chiesto la chiusura della connessione */
         if(atoi(rcvSegment -> finBit) == 1) {
-            //printf("\n[RECV] -> Ricevuto pacchetto di FIN: (seqNum: %d) - (ackNum: %d)\n", atoi(rcvSegment -> seqNum), rcvAck);
+            if(debug) printf("\n[RECV] -> Ricevuto pacchetto di FIN: (seqNum: %d) - (ackNum: %d)\n", atoi(rcvSegment -> seqNum), rcvAck);
             checkIfMustDie(client, RECV);
             *joinRet = 0;
             pthread_exit(joinRet);
@@ -1169,10 +1169,10 @@ void fin(ClientNode *client) {
 
         /* Invio FIN */
         if(randomSendTo(client -> sockfd, sndSegment, (struct sockaddr*)&(client -> connection), (client -> addrlenSocket), loss_prob)){
-            // printf("\n[FIN]: Sent to the client (%s:%d)\n", client -> ip, client -> clientPort);
+            if(debug) printf("\n[FIN]: Sent to the client (%s:%d)\n", client -> ip, client -> clientPort);
         }
         else{
-            // printf("\n[FIN]: LOST\n");
+            if(debug) printf("\n[FIN]: LOST\n");
         }
 
         countRetransmission += 1;
@@ -1239,9 +1239,7 @@ int upload(ClientNode *client, Segment *firstRcvSegment) {
 
         lastSeqNumRecv = atoi(rcvSegment -> seqNum);
 
-        // printf("%d\n", lastSeqNumRecv);
-
-        //printf("\nRicevuto pacchetto - (seqNum: %d)\n", atoi(rcvSegment -> seqNum));
+        if(debug) printf("\nRicevuto pacchetto - (seqNum: %d)\n", atoi(rcvSegment -> seqNum));
 
         pthread_mutex_lock(&(client -> consumeLock));
 
@@ -1254,19 +1252,18 @@ int upload(ClientNode *client, Segment *firstRcvSegment) {
             firstArrived = 1;
 
             tmpStrBuff = intToStr(rcvSegment -> msg, atoi(rcvSegment -> lenMsg));
-            //wprintf(L"\nPACCHETTO INIZIALE RICEVUTO: %s, LEN: %d\n", tmpStrBuff, atoi(rcvSegment -> lenMsg));
 
             tmpStr = strtok(tmpStrBuff, "\b");
             totalSegs = atoi(tmpStr);
-            printf("\nASPETTO %d SEGMENTI...\n", totalSegs);
+            if(debug) printf("\nASPETTO %d SEGMENTI...\n", totalSegs);
 
             tmpStr = strtok(NULL, "\b");
             strcpy(fileName, tmpStr);
-            printf("\nNOME ORIGINALE: %s...\n", fileName);
+            if(debug) printf("\nNOME ORIGINALE: %s...\n", fileName);
 
             tmpStr = strtok(NULL, "\b");
             strcpy(originalFileSHA256, tmpStr);
-            printf("\nSHA256: %s\n", originalFileSHA256);
+            if(debug) printf("\nSHA256: %s\n", originalFileSHA256);
 
             free(tmpStrBuff);
 
