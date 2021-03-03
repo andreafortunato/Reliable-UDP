@@ -527,7 +527,7 @@ int list(ClientNode *client) {
         }
     }
 
-    printf("[LIST] - Packets all loaded\n");
+    printf("[LIST] - All packets loaded\n");
     free(tmpIntBuff);
 
     int *joinRet;
